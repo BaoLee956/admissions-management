@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { testConnection } = require('./config/database');
+const authRoutes = require('./routes/auth.routes');
+const candidateRoutes = require('./routes/candidate.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +12,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors()); // Cho phép Frontend (React) gọi API xuống Backend
 app.use(express.json()); // Giúp server đọc được dữ liệu JSON
 app.use(express.urlencoded({ extended: true }));
+app.use('/api/v1/auth', authRoutes); // Đăng ký các API Routes chính thức
+app.use('/api/v1/candidates', candidateRoutes); // Đăng ký các API Routes cho thí sinh
 
 // API Test mặc định để kiểm tra server có sống không
 app.get('/', (req, res) => {

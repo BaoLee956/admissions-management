@@ -1,14 +1,17 @@
 const { pool } = require('../config/database');
 const { sendMail } = require('../utils/email.service');
+const jwt = require('jsonwebtoken'); 
 
 // Hàm hỗ trợ random mã OTP 6 số
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+// ========================================================
+// 1. HÀM YÊU CẦU GỬI OTP
+// ========================================================
 const requestCandidateOTP = async (req, res) => {
     const { sbd, cccd } = req.body;
 
     try {
-        // 1. Kiểm tra SBD và CCCD có tồn tại và khớp nhau không (BR-001)
         const checkUserQuery = 'SELECT * FROM ThiSinh WHERE SBD = $1 AND CCCD = $2';
         const userResult = await pool.query(checkUserQuery, [sbd, cccd]);
 
@@ -20,15 +23,11 @@ const requestCandidateOTP = async (req, res) => {
 
         const candidate = userResult.rows[0];
         const otpCode = generateOTP();
-        
-        // 2. Thiết lập thời gian hết hạn: 3 phút tính từ thời điểm hiện tại (BR-010)
         const expiredAt = new Date(Date.now() + 3 * 60000);
 
-        // 3. Cập nhật OTP và thời gian hết hạn vào bảng ThiSinh
         const updateOTPQuery = 'UPDATE ThiSinh SET OTP_code = $1, OTP_ExpiredAt = $2 WHERE SBD = $3';
         await pool.query(updateOTPQuery, [otpCode, expiredAt, sbd]);
 
-        // 4. Gửi mã OTP qua Email của Thí sinh
         const htmlContent = `
             <div style="font-family: Arial, sans-serif; padding: 20px;">
                 <h2 style="color: #2c3e50;">Xác thực đăng nhập Hệ thống Tuyển sinh</h2>
@@ -44,7 +43,6 @@ const requestCandidateOTP = async (req, res) => {
             return res.status(500).json({ message: 'Không thể gửi email OTP lúc này. Vui lòng thử lại sau.' });
         }
 
-        // 5. Trả về response thành công theo đúng API Design
         res.status(200).json({ message: `Mã OTP đã được gửi về email ${candidate.email.replace(/(.{2})(.*)(?=@)/, "$1***")}` });
 
     } catch (error) {
@@ -53,6 +51,61 @@ const requestCandidateOTP = async (req, res) => {
     }
 };
 
+// ========================================================
+// 2. HÀM KIỂM TRA OTP VÀ CẤP TOKEN
+// ========================================================
+const verifyCandidateOTP = async (req, res) => {
+    const { sbd, cccd, otp } = req.body;
+
+    try {
+        const checkQuery = 'SELECT * FROM ThiSinh WHERE SBD = $1 AND CCCD = $2 AND OTP_code = $3';
+        const result = await pool.query(checkQuery, [sbd, cccd, otp]);
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ 
+                error: { code: 'INVALID_OTP', message: 'Mã OTP không chính xác hoặc thông tin không hợp lệ.' } 
+            });
+        }
+
+        const candidate = result.rows[0];
+
+        const currentTime = new Date();
+        const expiredTime = new Date(candidate.otp_expiredat);
+
+        if (currentTime > expiredTime) {
+            return res.status(400).json({ 
+                error: { code: 'OTP_EXPIRED', message: 'Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.' } 
+            });
+        }
+
+        const payload = {
+            sbd: candidate.sbd,
+            role: 'CANDIDATE' 
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { 
+            expiresIn: process.env.JWT_EXPIRES_IN 
+        });
+
+        const resetOTPQuery = 'UPDATE ThiSinh SET OTP_code = NULL, OTP_ExpiredAt = NULL WHERE SBD = $1';
+        await pool.query(resetOTPQuery, [sbd]);
+
+        res.status(200).json({
+            message: 'Xác thực thành công.',
+            token: token,
+            user: {
+                sbd: candidate.sbd,
+                hoTen: candidate.hoten
+            }
+        });
+
+    } catch (error) {
+        console.error('Lỗi tại verifyCandidateOTP:', error);
+        res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
+    }
+};
+
 module.exports = {
-    requestCandidateOTP
+    requestCandidateOTP,
+    verifyCandidateOTP
 };
