@@ -34,6 +34,15 @@ const getAdmissionResult = async (req, res) => {
 
         const data = result.rows[0];
 
+        // Thêm câu truy vấn lấy điểm chi tiết
+        const chiTietQuery = `
+            SELECT m.TenMon AS "mon", c.Diem AS "diem" 
+            FROM ChiTietDiem c 
+            JOIN MonHoc m ON c.MaMon = m.MaMon 
+            WHERE c.SBD = $1;
+        `;
+        const resultDiem = await pool.query(chiTietQuery, [sbd]);
+
         // Format lại dữ liệu trả về cho Frontend
         res.status(200).json({
             data: {
@@ -42,7 +51,8 @@ const getAdmissionResult = async (req, res) => {
                 diemChuan: data.diemChuan,
                 diemCuaBan: data.diemCuaBan,
                 trangThai: data.trangThaiKetQua === 1 ? 'TRUNG_TUYEN' : 'KHONG_TRUNG_TUYEN',
-                daXacNhanNhapHoc: data.trangThaiHoSo !== null // Nếu đã có record trong bảng HoSoNhapHoc nghĩa là đã xác nhận
+                daXacNhanNhapHoc: data.trangThaiHoSo !== null, // Nếu đã có record trong bảng HoSoNhapHoc nghĩa là đã xác nhận
+                diemChiTiet: resultDiem.rows
             }
         });
 
