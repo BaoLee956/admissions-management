@@ -141,23 +141,59 @@ const processAdmissions = async (req, res) => {
                 ) >= ct.DiemChuan THEN 1
                 ELSE 2
             END
-            FROM ThiSinh ts, ChiTieuTuyenSinh ct
+            FROM ThiSinh ts, ChiTieuTuyenSinh ct, Nganh n
             WHERE nv.SBD = ts.SBD 
               AND nv.ID_ChiTieu = ct.ID
-            RETURNING nv.SBD, nv.TrangThai;
+              AND ct.MaNganh = n.MaNganh
+            RETURNING 
+                nv.SBD AS "sbd", 
+                ts.HoTen AS "hoTen", 
+                n.TenNganh AS "tenNganh", -- Bổ sung trả về Tên Ngành
+                nv.DiemTong AS "diemTong", 
+                nv.TrangThai AS "trangThai";
         `;
         const result = await pool.query(query);
+        
         res.status(200).json({ 
             message: "Đã hoàn tất quá trình xét tuyển", 
-            processedCount: result.rowCount 
+            processedCount: result.rowCount,
+            details: result.rows // Dữ liệu này sẽ được FE dùng để vẽ Popup
         });
     } catch (error) {
         console.error('Lỗi khi chạy thuật toán xét tuyển:', error);
-        // Bổ sung thêm error.message để nếu có lỗi, Postman sẽ in ra chi tiết nguyên nhân
         res.status(500).json({ 
             error: "Lỗi hệ thống khi chạy thuật toán xét tuyển", 
             detail: error.message 
         });
+    }
+};
+// [GET] Lấy danh sách thí sinh trúng tuyển (UC6)
+const getAdmittedStudents = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                ts.sbd as "sbd",
+                ts.hoten as "hoTen",
+                n.manganh as "maNganh",
+                n.tennganh as "tenNganh",
+                sv.mssv as "mssv",
+                CASE WHEN sv.mssv IS NOT NULL THEN 1 ELSE 0 END as "daCapMa"
+            FROM nguyenvong nv
+            JOIN thisinh ts ON nv.sbd = ts.sbd
+            JOIN chitieutuyensinh ct ON nv.id_chitieu = ct.id
+            JOIN nganh n ON ct.manganh = n.manganh
+            -- BẮT CẦU QUA BẢNG HỒ SƠ NHẬP HỌC (vì SinhVien liên kết với HoSoNhapHoc)
+            LEFT JOIN hosonhaphoc hs ON ts.sbd = hs.sbd
+            -- JOIN VÀO BẢNG SINH VIÊN QUA MÃ HỒ SƠ
+            LEFT JOIN sinhvien sv ON hs.mahoso = sv.mahoso 
+            WHERE nv.trangthai = 1
+            ORDER BY n.manganh ASC, ts.sbd ASC;
+        `;
+        const result = await pool.query(query);
+        res.status(200).json({ data: result.rows });
+    } catch (error) {
+        console.error('Lỗi khi lấy danh sách trúng tuyển:', error);
+        res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách trúng tuyển" });
     }
 };
 
@@ -209,13 +245,35 @@ const generateStudentIds = async (req, res) => {
         client.release();
     }
 };
-
+// [GET] Lấy danh sách chỉ tiêu và điểm chuẩn hiện tại
+const getAllCriteria = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                ct.ID as "idChiTieu",
+                ct.MaNganh as "maNganh",
+                n.TenNganh as "tenNganh",
+                ct.SoLuong as "soLuong",
+                ct.DiemChuan as "diemChuan"
+            FROM ChiTieuTuyenSinh ct
+            JOIN Nganh n ON ct.MaNganh = n.MaNganh
+            ORDER BY ct.MaNganh ASC;
+        `;
+        const result = await pool.query(query);
+        res.status(200).json({ data: result.rows });
+    } catch (error) {
+        console.error('Lỗi khi lấy danh sách chỉ tiêu:', error);
+        res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách chỉ tiêu" });
+    }
+};
 // Export toàn bộ các hàm ra ngoài để routes sử dụng
 module.exports = {
     getPendingApplications,
     getApplicationDetails,
     reviewApplication,
+    getAllCriteria,
     updateDiemChuan,
     processAdmissions,
-    generateStudentIds
+    generateStudentIds,
+    getAdmittedStudents
 };

@@ -44,9 +44,9 @@ const seedDatabase = async () => {
     ];
 
     const chiTieuData = [
-        { MaNganh: 'CNTT01', SoLuong: 500 }, // Kỳ vọng ID sẽ là 1
-        { MaNganh: 'ATTT01', SoLuong: 200 }, // Kỳ vọng ID sẽ là 2
-        { MaNganh: 'DTVT01', SoLuong: 300 }  // Kỳ vọng ID sẽ là 3
+        { MaNganh: 'CNTT01', SoLuong: 500 }, 
+        { MaNganh: 'ATTT01', SoLuong: 200 }, 
+        { MaNganh: 'DTVT01', SoLuong: 300 }  
     ];
 
     // 3. Dữ liệu Nhân viên & Thí sinh
@@ -62,7 +62,7 @@ const seedDatabase = async () => {
         { SBD: 'TS010', CCCD: '001082000010', HoTen: 'Ngô Kiều Oanh', NgaySinh: '2005-10-08', GioiTinh: 'Nữ', Email: 'hellotuilabao@gmail.com', SDT: '0900000111', KhuVuc: 'KV1' }
     ];
 
-    // 4. Dữ liệu điểm chi tiết (Để có thông tin hiển thị lên giao diện nếu cần)
+    // 4. Dữ liệu điểm chi tiết 
     const scoresData = [
         { SBD: 'TS001', scores: { TOAN: 8.5, LY: 8.0, HOA: 9.0 } },
         { SBD: 'TS002', scores: { TOAN: 5.0, LY: 6.0, HOA: 4.5 } },
@@ -70,7 +70,7 @@ const seedDatabase = async () => {
         { SBD: 'TS010', scores: { TOAN: 8.5, LY: 8.0, HOA: 8.0 } }
     ];
 
-    // 5. Dữ liệu Nguyện vọng phục vụ việc chạy thuật toán xét tuyển (UC 5)
+    // 5. Dữ liệu Nguyện vọng 
     const nguyenVongData = [
         { SBD: 'TS001', ID_ChiTieu: 1, MaToHop: 'A00', ThuTuUuTien: 1, DiemTong: 25.5 },
         { SBD: 'TS002', ID_ChiTieu: 1, MaToHop: 'A00', ThuTuUuTien: 1, DiemTong: 15.5 },
@@ -81,7 +81,6 @@ const seedDatabase = async () => {
     try {
         console.log('⏳ Đang tiến hành đồng bộ dữ liệu mẫu vào Database...');
 
-        // Tự động bổ sung cột Điểm Chuẩn vào bảng ChiTieuTuyenSinh nếu trong schema chưa có
         await pool.query(`ALTER TABLE ChiTieuTuyenSinh ADD COLUMN IF NOT EXISTS DiemChuan DECIMAL(5,2) NULL;`);
 
         // --- NẠP DANH MỤC CƠ BẢN ---
@@ -114,14 +113,12 @@ const seedDatabase = async () => {
             await pool.query(`INSERT INTO Nganh (MaNganh, TenNganh, MaKhoa) VALUES ($1, $2, $3) ON CONFLICT (MaNganh) DO NOTHING;`, [nganh.MaNganh, nganh.TenNganh, nganh.MaKhoa]);
         }
         
-        // Tạo Đợt tuyển sinh và lấy ID
         const dotRes = await pool.query(`
             INSERT INTO DotTuyenSinh (TenDot, NamHoc, IsActive) VALUES ($1, $2, $3)
             ON CONFLICT DO NOTHING RETURNING MaDot;
         `, [dotTuyenSinhData[0].TenDot, dotTuyenSinhData[0].NamHoc, dotTuyenSinhData[0].IsActive]);
         let maDot = dotRes.rows.length > 0 ? dotRes.rows[0].madot : 1;
 
-        // Xóa chỉ tiêu cũ để tránh trùng ID khi chạy seed nhiều lần, sau đó tạo 3 Chỉ tiêu
         await pool.query(`DELETE FROM ChiTieuTuyenSinh;`);
         await pool.query(`ALTER SEQUENCE chitieutuyensinh_id_seq RESTART WITH 1;`); 
         for (const chiTieu of chiTieuData) {
@@ -161,6 +158,23 @@ const seedDatabase = async () => {
             `, [nv.SBD, nv.ID_ChiTieu, nv.MaToHop, nv.ThuTuUuTien, nv.DiemTong]);
         }
         console.log('✅ Đã nạp dữ liệu Nguyện vọng thành công!');
+
+        // --- NẠP HỒ SƠ NHẬP HỌC (Để test UC3 và UC6) ---
+        await pool.query(`DELETE FROM HoSoNhapHoc;`);
+        const hoSoData = [
+            { SBD: 'TS001', TrangThai: 1 }, // 1: Chờ duyệt
+            { SBD: 'TS002', TrangThai: 1 },
+            { SBD: 'TS003', TrangThai: 1 },
+            { SBD: 'TS010', TrangThai: 1 }
+        ];
+        
+        for (const hs of hoSoData) {
+            await pool.query(`
+                INSERT INTO HoSoNhapHoc (SBD, TrangThai) 
+                VALUES ($1, $2)
+            `, [hs.SBD, hs.TrangThai]);
+        }
+        console.log('✅ Đã nạp dữ liệu Hồ sơ nhập học thành công!');
 
     } catch (error) {
         console.error('❌ Lỗi khi nạp dữ liệu (Seed Data):', error.message);
