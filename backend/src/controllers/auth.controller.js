@@ -1,6 +1,7 @@
 const { pool } = require('../config/database');
 const { sendMail } = require('../utils/email.service');
 const jwt = require('jsonwebtoken'); 
+const bcrypt = require('bcrypt');
 
 // Hàm hỗ trợ random mã OTP 6 số
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -104,8 +105,69 @@ const verifyCandidateOTP = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
 };
+// ========================================================
+// 3. HÀM ĐĂNG NHẬP CHO CÁN BỘ / ADMIN
+// ========================================================
+const adminLogin = async (req, res) => {
+    const { email, password } = req.body;
 
+    try {
+        // Query lấy thông tin nhân viên và tên nhóm quyền (role)
+        const query = `
+            SELECT nv.*, nq.TenNhom as role 
+            FROM NhanVien nv 
+            JOIN NhomQuyen nq ON nv.MaNhom = nq.MaNhom 
+            WHERE nv.Email = $1
+        `;
+        const result = await pool.query(query, [email]);
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Email hoặc mật khẩu không chính xác.' });
+        }
+
+        const user = result.rows[0];
+
+        // So sánh mật khẩu nhập vào với mật khẩu đã băm trong database
+        // Lưu ý: PostgreSQL trả về tên cột viết thường (matkhau)
+        const isMatch = await bcrypt.compare(password, user.matkhau);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Email hoặc mật khẩu không chính xác.' });
+        }
+
+        // Kiểm tra tài khoản có bị khóa không
+        if (user.islocked) {
+            return res.status(403).json({ error: 'Tài khoản của bạn đã bị khóa.' });
+        }
+
+        // Tạo payload và ký JWT Token
+        const payload = {
+            email: user.email,
+            role: user.role, // Sẽ là 'ADMIN' hoặc 'OFFICER'
+            id: user.manhanvien
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { 
+            expiresIn: process.env.JWT_EXPIRES_IN || '1d' 
+        });
+
+        res.status(200).json({
+            message: 'Đăng nhập thành công.',
+            token: token,
+            user: {
+                id: user.manhanvien,
+                email: user.email,
+                hoTen: user.hoten,
+                role: user.role
+            }
+        });
+
+    } catch (error) {
+        console.error('Lỗi tại adminLogin:', error);
+        res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
+    }
+};
 module.exports = {
     requestCandidateOTP,
-    verifyCandidateOTP
+    verifyCandidateOTP,
+    adminLogin
 };

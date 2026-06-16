@@ -5,6 +5,7 @@ const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth.routes');
 const candidateRoutes = require('./routes/candidate.routes');
 const adminRoutes = require('./routes/admin.routes');
+const officerRoutes = require('./routes/officer.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +17,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/v1/auth', authRoutes); // Đăng ký các API Routes chính thức
 app.use('/api/v1/candidates', candidateRoutes); // Đăng ký các API Routes cho thí sinh
 app.use('/api/v1/admin', adminRoutes); // Đăng ký các API Routes cho admin
+app.use('/api/v1/officer', officerRoutes); // Đăng ký các API Routes cho officer
 
 // API Test mặc định để kiểm tra server có sống không
 app.get('/', (req, res) => {
