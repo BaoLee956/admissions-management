@@ -590,7 +590,7 @@ const getAllDots = async (req, res) => {
 // [GET] Lấy danh sách tất cả các ngành trong hệ thống để làm dropdown
 const getAllNganh = async (req, res) => {
     try {
-        const query = 'SELECT MaNganh AS "maNganh", TenNganh AS "tenNganh" FROM Nganh ORDER BY TenNganh ASC';
+        const query = 'SELECT MaNganh AS "maNganh", TenNganh AS "tenNganh", MaKhoa AS "maKhoa" FROM Nganh ORDER BY TenNganh ASC';
         const result = await pool.query(query);
         res.status(200).json({ data: result.rows });
     } catch (error) {
@@ -710,6 +710,63 @@ const importCandidates = async (req, res) => {
     }
 };
 
+// [GET] Lấy danh sách Khoa để đổ ra Dropdown
+const getAllKhoa = async (req, res) => {
+    try {
+        const result = await pool.query('SELECT MaKhoa AS "maKhoa", TenKhoa AS "tenKhoa" FROM Khoa ORDER BY TenKhoa ASC');
+        res.status(200).json({ data: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: "Lỗi khi lấy danh sách khoa." });
+    }
+};
+
+// [POST] Thêm Khoa mới (UC09 phụ)
+const createKhoa = async (req, res) => {
+    const { maKhoa, tenKhoa } = req.body;
+    try {
+        await pool.query('INSERT INTO Khoa (MaKhoa, TenKhoa) VALUES ($1, $2)', [maKhoa.toUpperCase(), tenKhoa]);
+        res.status(201).json({ message: 'Thêm khoa thành công.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Lỗi khi thêm khoa.' });
+    }
+};
+
+// [PUT] Cập nhật thông tin Khoa
+const updateKhoa = async (req, res) => {
+    const { id } = req.params; // Mã khoa cần sửa truyền trên URL
+    const { tenKhoa } = req.body;
+    try {
+        await pool.query(
+            'UPDATE Khoa SET TenKhoa = $1 WHERE MaKhoa = $2',
+            [tenKhoa, id.toUpperCase()]
+        );
+        res.status(200).json({ message: 'Cập nhật thông tin Khoa thành công.' });
+    } catch (error) {
+        console.error('Lỗi cập nhật khoa:', error);
+        res.status(500).json({ error: 'Lỗi hệ thống khi cập nhật thông tin khoa.' });
+    }
+};
+
+// [DELETE] Xóa Khoa khỏi hệ thống
+const deleteKhoa = async (req, res) => {
+    const { id } = req.params;
+    try {
+        // RÀNG BUỘC NGHIỆP VỤ BẮT BUỘC (BR_Khoa_02): Kiểm tra xem có ngành nào đang thuộc khoa này không
+        const checkUsage = await pool.query('SELECT MaNganh FROM Nganh WHERE MaKhoa = $1 LIMIT 1', [id]);
+        if (checkUsage.rows.length > 0) {
+            return res.status(400).json({ 
+                error: 'Không thể xóa! Khoa này đang có các ngành học trực thuộc. Hãy xóa hoặc chuyển ngành sang khoa khác trước.' 
+            });
+        }
+
+        await pool.query('DELETE FROM Khoa WHERE MaKhoa = $1', [id]);
+        res.status(200).json({ message: 'Đã xóa khoa khỏi danh mục hệ thống thành công.' });
+    } catch (error) {
+        console.error('Lỗi xóa khoa:', error);
+        res.status(500).json({ error: 'Lỗi hệ thống khi xóa khoa.' });
+    }
+};
+
 module.exports = {
     getPendingApplications,
     getApplicationDetails,
@@ -732,5 +789,9 @@ module.exports = {
     getAllNganh,
     importCandidates,
     updateNganhCatalog,
-    deleteNganhCatalog
+    deleteNganhCatalog,
+    getAllKhoa,
+    createKhoa,
+    updateKhoa,
+    deleteKhoa
 };

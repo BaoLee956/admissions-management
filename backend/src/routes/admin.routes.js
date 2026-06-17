@@ -19,7 +19,13 @@ router.post('/officers', adminController.createOfficer);                 // Thê
 router.put('/officers/:id/toggle-lock', adminController.toggleLockOfficer); // Khóa/mở khóa cán bộ
 
 // --- UC09: QUẢN LÝ DANH MỤC (Độc quyền Admin) ---
-router.post('/categories/nganh', adminController.createNganhCatalog);    // Thêm ngành học mới
+router.post('/categories/nganh', adminController.createNganhCatalog); 
+router.put('/categories/nganh/:id', adminController.updateNganhCatalog);
+router.delete('/categories/nganh/:id', adminController.deleteNganhCatalog);
+router.get('/categories/khoa', adminController.getAllKhoa);   // Lấy danh sách khoa
+router.post('/categories/khoa', adminController.createKhoa);         // Thêm khoa mới
+router.put('/categories/khoa/:id', adminController.updateKhoa);      // Sửa khoa
+router.delete('/categories/khoa/:id', adminController.deleteKhoa);   // Xóa khoa
 
 // --- UC10: QUẢN LÝ CẤU HÌNH ĐỢT TUYỂN SINH & CHỈ TIÊU (Độc quyền Admin) ---
 router.get('/admissions/dot', adminController.getAllDots);
