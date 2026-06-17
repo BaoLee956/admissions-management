@@ -41,11 +41,15 @@ const verifyToken = async (req, res, next) => { // Thêm async ở đây
 // 2. Middleware kiểm tra Quyền (Role)
 const checkRole = (roles) => {
     return (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.role)) {
+        // TỰ ĐỘNG ÉP KIỂU: Nếu roles truyền vào là chuỗi ('ADMIN'), tự bọc nó thành mảng (['ADMIN'])
+        const allowedRoles = Array.isArray(roles) ? roles : [roles];
+
+        // Kiểm tra xem user có tồn tại và role của user có nằm trong danh sách cho phép không
+        if (!req.user || !allowedRoles.includes(req.user.role)) {
             return res.status(403).json({
                 error: {
                     code: 'FORBIDDEN',
-                    message: `Bạn không có quyền thực hiện hành động này. Yêu cầu quyền: ${roles.join(' hoặc ')}`
+                    message: `Bạn không có quyền thực hiện hành động này. Yêu cầu quyền: ${allowedRoles.join(' hoặc ')}`
                 }
             });
         }

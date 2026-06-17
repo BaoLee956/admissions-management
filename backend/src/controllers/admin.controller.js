@@ -395,18 +395,29 @@ const generateStudentIds = async (req, res) => {
 // [GET] Lấy danh sách chỉ tiêu và điểm chuẩn hiện tại
 const getAllCriteria = async (req, res) => {
     try {
-        const query = `
+        let query = `
             SELECT 
                 ct.ID as "idChiTieu", 
                 ct.MaDot as "maDot", 
+                d.TenDot as "tenDot",
+                d.IsActive as "isActive",
                 ct.MaNganh as "maNganh", 
                 n.TenNganh as "tenNganh",
                 ct.SoLuong as "soLuong", 
                 ct.DiemChuan as "diemChuan"
             FROM ChiTieuTuyenSinh ct
             JOIN Nganh n ON ct.MaNganh = n.MaNganh
-            ORDER BY ct.MaDot DESC, ct.MaNganh ASC
+            JOIN DotTuyenSinh d ON ct.MaDot = d.MaDot
         `;
+
+        // ĐỊNH TUYẾN THÔNG MINH: Nếu Cán bộ gọi API này, CHỈ lấy đợt đang mở
+        if (req.originalUrl.includes('/officer/')) {
+            query += ` WHERE d.IsActive = true`;
+        }
+
+        // Sắp xếp Đợt mới nhất lên đầu, sau đó xếp theo Mã ngành
+        query += ` ORDER BY d.MaDot DESC, ct.MaNganh ASC`;
+
         const result = await pool.query(query);
         res.status(200).json({ data: result.rows });
     } catch (error) {
@@ -418,18 +429,47 @@ const getAllCriteria = async (req, res) => {
 // 1. [GET] Dành cho CÁN BỘ: Thống kê tác nghiệp hàng ngày
 const getDashboardStats = async (req, res) => {
     try {
-        const tongThiSinhRes = await pool.query('SELECT COUNT(*) FROM ThiSinh');
-        const tongThiSinh = parseInt(tongThiSinhRes.rows[0].count);
+        // 1. Lấy danh sách Tổng thí sinh
+        const listTongThiSinh = await pool.query('SELECT SBD as "sbd", HoTen as "hoTen", CCCD as "cccd", Email as "email" FROM ThiSinh ORDER BY SBD ASC');
+        
+        // 2. Lấy danh sách Đã trúng tuyển
+        const listTrungTuyen = await pool.query(`
+            SELECT DISTINCT ts.SBD as "sbd", ts.HoTen as "hoTen", ts.Email as "email", ts.SDT as "sdt" 
+            FROM ThiSinh ts JOIN NguyenVong nv ON ts.SBD = nv.SBD 
+            WHERE nv.TrangThai = 1 ORDER BY ts.SBD ASC
+        `);
 
-        const tongHoSoRes = await pool.query('SELECT COUNT(*) FROM HoSoNhapHoc');
-        const tongHoSo = parseInt(tongHoSoRes.rows[0].count);
+        // 3. Lấy danh sách Tổng hồ sơ
+        const listHoSo = await pool.query(`
+            SELECT hs.MaHoSo as "maHoSo", ts.SBD as "sbd", ts.HoTen as "hoTen", hs.TrangThai as "trangThai", hs.NgayNop as "ngayNop", ts.Email as "email"
+            FROM HoSoNhapHoc hs JOIN ThiSinh ts ON hs.SBD = ts.SBD ORDER BY hs.NgayNop DESC
+        `);
 
-        const trungTuyenRes = await pool.query('SELECT COUNT(DISTINCT SBD) FROM NguyenVong WHERE TrangThai = 1');
-        const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
+        // 4. Lấy danh sách Chưa nộp hồ sơ
+        const listChuaNop = await pool.query(`
+            SELECT DISTINCT ts.SBD as "sbd", ts.HoTen as "hoTen", ts.Email as "email", ts.SDT as "sdt"
+            FROM ThiSinh ts JOIN NguyenVong nv ON ts.SBD = nv.SBD 
+            WHERE nv.TrangThai = 1 AND ts.SBD NOT IN (SELECT SBD FROM HoSoNhapHoc)
+            ORDER BY ts.SBD ASC
+        `);
 
-        let chuaNop = trungTuyen - tongHoSo; 
-        if (chuaNop < 0) chuaNop = 0; 
+        // 5. Lấy danh sách Đã cấp MSSV
+        const listDaCapMssv = await pool.query(`
+            SELECT ts.SBD as "sbd", ts.HoTen as "hoTen", sv.MSSV as "mssv", ts.Email as "email"
+            FROM SinhVien sv 
+            JOIN HoSoNhapHoc hs ON sv.MaHoSo = hs.MaHoSo 
+            JOIN ThiSinh ts ON hs.SBD = ts.SBD
+            ORDER BY sv.MSSV ASC
+        `);
 
+        // Gán số lượng (Metrics)
+        const tongThiSinh = listTongThiSinh.rows.length;
+        const trungTuyen = listTrungTuyen.rows.length;
+        const tongHoSo = listHoSo.rows.length;
+        const chuaNop = listChuaNop.rows.length;
+        const daCapMssv = listDaCapMssv.rows.length;
+
+        // Xử lý biểu đồ trạng thái
         const trangThaiRes = await pool.query(`SELECT TrangThai, COUNT(*) as count FROM HoSoNhapHoc GROUP BY TrangThai`);
         let hoSoChoDuyet = 0;
         const bieuDoTrangThai = trangThaiRes.rows.map(row => {
@@ -442,9 +482,7 @@ const getDashboardStats = async (req, res) => {
             return { name, value: count, trangThai: row.trangthai };
         });
 
-        const mssvRes = await pool.query('SELECT COUNT(*) FROM SinhVien');
-        const daCapMssv = parseInt(mssvRes.rows[0].count);
-
+        // Xử lý lịch sử hoạt động
         const lichSuRes = await pool.query(`
             SELECT hs.MaHoSo, ts.SBD, ts.HoTen, hs.TrangThai, hs.NgayNop
             FROM HoSoNhapHoc hs JOIN ThiSinh ts ON hs.SBD = ts.SBD
@@ -455,7 +493,16 @@ const getDashboardStats = async (req, res) => {
             data: {
                 metrics: { tongThiSinh, tongHoSo, chuaNop, hoSoChoDuyet, trungTuyen, daCapMssv },
                 charts: { trangThai: bieuDoTrangThai },
-                activities: lichSuRes.rows
+                activities: lichSuRes.rows,
+                // BỔ SUNG: Trả về danh sách chi tiết cho Frontend làm Popup
+                details: {
+                    tongThiSinh: listTongThiSinh.rows,
+                    trungTuyen: listTrungTuyen.rows,
+                    chuaNop: listChuaNop.rows,
+                    tongHoSo: listHoSo.rows,
+                    daCapMssv: listDaCapMssv.rows,
+                    hoSoChoDuyet: listHoSo.rows.filter(h => h.trangThai === 1) // Lọc riêng hồ sơ đang chờ duyệt
+                }
             }
         });
     } catch (error) {
