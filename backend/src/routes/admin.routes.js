@@ -40,6 +40,7 @@ router.post(
     '/admissions/import-candidates', 
     upload.single('file'),
     adminController.importCandidates
-);          //    Phân bổ chỉ tiêu ngành
+); 
+router.get('/dashboard/bi-stats', adminController.getAdminDashboardStats);        
 router.put('/users/:id/reset-password', adminController.resetOfficerPassword);
 module.exports = router;

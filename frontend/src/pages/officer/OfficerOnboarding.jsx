@@ -31,7 +31,7 @@ const OfficerOnboarding = () => {
       const studentData = response.data.data || [];
       setStudents(studentData);
     } catch (error) {
-      console.error('Lỗi khi tải danh sách trúng tuyển:', error);
+      console.error('Lỗi khi tải danh sách đủ điều kiện nhập học:', error);
     } finally {
       setLoading(false);
     }
@@ -102,7 +102,7 @@ const OfficerOnboarding = () => {
             <Users size={24} />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">Tổng số trúng tuyển</p>
+            <p className="text-sm font-medium text-gray-500">Đủ điều kiện nhập học</p>
             <p className="text-2xl font-bold text-gray-900">{totalAdmitted}</p>
           </div>
         </div>

@@ -244,7 +244,7 @@ const processAdmissions = async (req, res) => {
     }
 };
 
-// [GET] Lấy danh sách thí sinh trúng tuyển
+// [GET] Lấy danh sách thí sinh ĐỦ ĐIỀU KIỆN NHẬP HỌC (Đã đậu điểm + Đã duyệt hồ sơ)
 const getAdmittedStudents = async (req, res) => {
     try {
         const query = `
@@ -256,15 +256,19 @@ const getAdmittedStudents = async (req, res) => {
             JOIN thisinh ts ON nv.sbd = ts.sbd
             JOIN chitieutuyensinh ct ON nv.id_chitieu = ct.id
             JOIN nganh n ON ct.manganh = n.manganh
-            LEFT JOIN hosonhaphoc hs ON ts.sbd = hs.sbd
+            
+            -- SỬA TẠI ĐÂY: Chuyển LEFT JOIN thành JOIN cứng với bảng HoSoNhapHoc
+            JOIN hosonhaphoc hs ON ts.sbd = hs.sbd 
             LEFT JOIN sinhvien sv ON hs.mahoso = sv.mahoso 
-            WHERE nv.trangthai = 1
+            
+            -- LOGIC CỐT LÕI: Đậu xét tuyển (nv.trangthai = 1) VÀ Hồ sơ đã được duyệt (hs.trangthai = 2)
+            WHERE nv.trangthai = 1 AND hs.trangthai = 2
             ORDER BY n.manganh ASC, ts.sbd ASC;
         `;
         const result = await pool.query(query);
         res.status(200).json({ data: result.rows });
     } catch (error) {
-        console.error('Lỗi khi lấy danh sách trúng tuyển:', error);
+        console.error('Lỗi khi lấy danh sách trúng tuyển hợp lệ:', error);
         res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách trúng tuyển" });
     }
 };
@@ -350,7 +354,7 @@ const getAllCriteria = async (req, res) => {
     }
 };
 
-// [GET] Thống kê dữ liệu cho trang Dashboard (UC 7)
+// 1. [GET] Dành cho CÁN BỘ: Thống kê tác nghiệp hàng ngày
 const getDashboardStats = async (req, res) => {
     try {
         const tongThiSinhRes = await pool.query('SELECT COUNT(*) FROM ThiSinh');
@@ -359,13 +363,13 @@ const getDashboardStats = async (req, res) => {
         const tongHoSoRes = await pool.query('SELECT COUNT(*) FROM HoSoNhapHoc');
         const tongHoSo = parseInt(tongHoSoRes.rows[0].count);
 
-        // Đếm số lượng thí sinh đã trúng tuyển (Distinct để không đếm trùng SBD)
+        // Đếm số lượng trúng tuyển TRƯỚC (Dùng DISTINCT để đếm số người, không đếm số nguyện vọng)
         const trungTuyenRes = await pool.query('SELECT COUNT(DISTINCT SBD) FROM NguyenVong WHERE TrangThai = 1');
         const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
 
-        // LOGIC MỚI: Thí sinh chưa nộp hồ sơ = Tổng người đã đậu - Tổng hồ sơ đã tạo
+        // LOGIC CHUẨN: Chưa nộp = Tổng đậu - Đã nộp
         let chuaNop = trungTuyen - tongHoSo; 
-        if (chuaNop < 0) chuaNop = 0; // Đảm bảo số liệu không bị âm nếu có sai lệch nhỏ
+        if (chuaNop < 0) chuaNop = 0; // Đảm bảo không bị âm
 
         const trangThaiRes = await pool.query(`SELECT TrangThai, COUNT(*) as count FROM HoSoNhapHoc GROUP BY TrangThai`);
         let hoSoChoDuyet = 0;
@@ -396,9 +400,94 @@ const getDashboardStats = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Lỗi lấy thống kê dashboard:', error);
+        console.error('Lỗi lấy thống kê dashboard Cán bộ:', error);
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
+};
+
+// 2. [GET] Dành cho ADMIN: Thống kê phân tích BI (Chuyển sang hàm riêng)
+const getAdminDashboardStats = async (req, res) => {
+    try {
+        const activeDotRes = await pool.query('SELECT MaDot, TenDot FROM DotTuyenSinh WHERE IsActive = true LIMIT 1');
+        if (activeDotRes.rows.length === 0) return res.status(200).json({ data: null, message: 'Chưa có đợt.' });
+        
+        const maDot = activeDotRes.rows[0].madot;
+        const tenDot = activeDotRes.rows[0].tendot;
+
+        const tongThiSinhRes = await pool.query('SELECT COUNT(*) FROM ThiSinh');
+        const tongThiSinh = parseInt(tongThiSinhRes.rows[0].count);
+
+        const chiTieuRes = await pool.query('SELECT SUM(SoLuong) as tong_chi_tieu FROM ChiTieuTuyenSinh WHERE MaDot = $1', [maDot]);
+        const tongChiTieu = parseInt(chiTieuRes.rows[0].tong_chi_tieu || 0);
+
+        const trungTuyenRes = await pool.query(`
+            SELECT COUNT(DISTINCT nv.SBD) FROM NguyenVong nv JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID 
+            WHERE nv.TrangThai = 1 AND ct.MaDot = $1
+        `, [maDot]);
+        const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
+
+        const hoSoRes = await pool.query('SELECT COUNT(*) FROM HoSoNhapHoc');
+        const tongHoSo = parseInt(hoSoRes.rows[0].count);
+
+        const mssvRes = await pool.query('SELECT COUNT(*) FROM SinhVien');
+        const daCapMssv = parseInt(mssvRes.rows[0].count);
+
+        const funnelData = [
+            { stage: '1. Đăng ký', value: tongThiSinh }, { stage: '2. Đậu NV', value: trungTuyen },
+            { stage: '3. Tạo HS', value: tongHoSo }, { stage: '4. Nhập học', value: daCapMssv }
+        ];
+
+        const passFailData = [
+            { name: 'Trúng tuyển', value: trungTuyen, fill: '#10B981' },
+            { name: 'Không trúng tuyển', value: tongThiSinh - trungTuyen > 0 ? tongThiSinh - trungTuyen : 0, fill: '#EF4444' }
+        ];
+
+        const topCompetitiveRes = await pool.query(`
+            SELECT n.MaNganh, ct.SoLuong as "chiTieu", COUNT(nv.SBD) as "soNguoiDK"
+            FROM ChiTieuTuyenSinh ct JOIN Nganh n ON ct.MaNganh = n.MaNganh LEFT JOIN NguyenVong nv ON ct.ID = nv.ID_ChiTieu
+            WHERE ct.MaDot = $1 GROUP BY n.MaNganh, ct.SoLuong ORDER BY "soNguoiDK" DESC LIMIT 5
+        `, [maDot]);
+        const topCompetitiveData = topCompetitiveRes.rows.map(row => ({
+            name: row.manganh, 'Đăng ký': parseInt(row.soNguoiDK), 'Chỉ tiêu': parseInt(row.chiTieu),
+            tiLeChoi: parseFloat((row.soNguoiDK / (row.chiTieu || 1)).toFixed(2))
+        }));
+
+        const phoDiemRes = await pool.query(`
+            SELECT DiemTong FROM NguyenVong nv JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
+            WHERE ct.MaDot = $1 AND nv.ThuTuUuTien = 1
+        `, [maDot]);
+        const phoDiemCounts = { '<15': 0, '15-18': 0, '18-21': 0, '21-24': 0, '24-27': 0, '>27': 0 };
+        phoDiemRes.rows.forEach(r => {
+            const diem = parseFloat(r.diemtong);
+            if (diem < 15) phoDiemCounts['<15']++; else if (diem < 18) phoDiemCounts['15-18']++;
+            else if (diem < 21) phoDiemCounts['18-21']++; else if (diem < 24) phoDiemCounts['21-24']++;
+            else if (diem < 27) phoDiemCounts['24-27']++; else phoDiemCounts['>27']++;
+        });
+        const phoDiemData = Object.keys(phoDiemCounts).map(k => ({ range: k, count: phoDiemCounts[k] }));
+
+        const khuVucRes = await pool.query(`
+            SELECT ct.MaNganh, ts.KhuVuc, COUNT(ts.SBD) FROM NguyenVong nv
+            JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID JOIN ThiSinh ts ON nv.SBD = ts.SBD
+            WHERE ct.MaDot = $1 GROUP BY ct.MaNganh, ts.KhuVuc
+        `, [maDot]);
+        const khuVucMap = {};
+        khuVucRes.rows.forEach(r => {
+            if (!khuVucMap[r.manganh]) khuVucMap[r.manganh] = { name: r.manganh, KV1: 0, KV2: 0, KV2NT: 0, KV3: 0 };
+            khuVucMap[r.manganh][r.khuvuc] = parseInt(r.count);
+        });
+
+        res.status(200).json({
+            data: {
+                activeDot: tenDot,
+                kpis: {
+                    tongThiSinh, tongChiTieu, trungTuyen,
+                    tiLeChoi: tongChiTieu > 0 ? (tongThiSinh / tongChiTieu).toFixed(2) : 0,
+                    tiLeLapDay: tongChiTieu > 0 ? Math.round((trungTuyen / tongChiTieu) * 100) : 0
+                },
+                charts: { funnel: funnelData, passFail: passFailData, topCompetitive: topCompetitiveData, phoDiem: phoDiemData, khuVuc: Object.values(khuVucMap) }
+            }
+        });
+    } catch (error) { res.status(500).json({ message: 'Lỗi hệ thống.' }); }
 };
 
 // ========================================================
@@ -793,5 +882,6 @@ module.exports = {
     getAllKhoa,
     createKhoa,
     updateKhoa,
-    deleteKhoa
+    deleteKhoa,
+    getAdminDashboardStats
 };

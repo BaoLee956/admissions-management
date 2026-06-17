@@ -20,6 +20,7 @@ import OfficerApplications from './pages/officer/OfficerApplications';
 import AdminOfficers from './pages/admin/AdminOfficers';
 import AdminAdmissionsConfig from './pages/admin/AdminAdmissionsConfig';
 import AdminMajors from './pages/admin/AdminMajors';
+import AdminOverview from './pages/admin/AdminOverview';
 
 function App() {
   return (
@@ -47,7 +48,7 @@ function App() {
           <Route path="/admin" element={<AdminLayout />}>
             {/* Nếu vào /admin thì tự động đẩy sang dashboard */}
             <Route index element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<OfficerDashboard />} />
+            <Route path="dashboard" element={<AdminOverview />} />
             <Route path="officers" element={<AdminOfficers />} />
             <Route path="categories" element={<AdminMajors />} />
             <Route path="admissions-config" element={<AdminAdmissionsConfig />} />
