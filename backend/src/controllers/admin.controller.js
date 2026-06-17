@@ -1,5 +1,6 @@
 const { pool } = require('../config/database');
 const bcrypt = require('bcrypt');
+const xlsx = require('xlsx');
 
 // ========================================================
 // 1. NHÓM API QUẢN LÝ VÀ DUYỆT HỒ SƠ (UC 3 & UC 4)
@@ -123,41 +124,123 @@ const updateDiemChuan = async (req, res) => {
 
 // [POST] Chạy thuật toán xét tuyển
 const processAdmissions = async (req, res) => {
+    const client = await pool.connect();
     try {
-        const query = `
-            UPDATE NguyenVong nv
-            SET TrangThai = CASE 
-                WHEN (nv.DiemTong + 
-                    CASE ts.KhuVuc
-                        WHEN 'KV1' THEN 0.75
-                        WHEN 'KV2' THEN 0.25
-                        WHEN 'KV2NT' THEN 0.5
-                        WHEN 'KV3' THEN 0
-                        ELSE 0
-                    END
-                ) >= ct.DiemChuan THEN 1
-                ELSE 2
-            END
-            FROM ThiSinh ts, ChiTieuTuyenSinh ct, Nganh n
-            WHERE nv.SBD = ts.SBD 
-              AND nv.ID_ChiTieu = ct.ID
-              AND ct.MaNganh = n.MaNganh
-            RETURNING 
-                nv.SBD AS "sbd", 
-                ts.HoTen AS "hoTen", 
-                n.TenNganh AS "tenNganh",
-                nv.DiemTong AS "diemTong", 
-                nv.TrangThai AS "trangThai";
-        `;
-        const result = await pool.query(query);
-        res.status(200).json({ 
-            message: "Đã hoàn tất quá trình xét tuyển", 
-            processedCount: result.rowCount,
-            details: result.rows 
+        await client.query('BEGIN'); 
+
+        // 1. TÌM ĐỢT TUYỂN SINH ĐANG MỞ
+        const activeDotRes = await client.query('SELECT MaDot FROM DotTuyenSinh WHERE IsActive = true LIMIT 1');
+        if (activeDotRes.rows.length === 0) {
+            throw new Error("Hệ thống không có đợt tuyển sinh nào đang mở.");
+        }
+        const activeDotId = activeDotRes.rows[0].madot;
+
+        // 2. Reset trạng thái Đợt hiện tại
+        await client.query(`
+            UPDATE NguyenVong 
+            SET TrangThai = 2 
+            WHERE ID_ChiTieu IN (SELECT ID FROM ChiTieuTuyenSinh WHERE MaDot = $1)
+        `, [activeDotId]);
+
+        // 3. LẤY THÔNG TIN CHỈ TIÊU & ĐIỂM CHUẨN ADMIN ĐÃ SET (ĐIỂM SÀN)
+        const criteriaRes = await client.query('SELECT ID, SoLuong, DiemChuan FROM ChiTieuTuyenSinh WHERE MaDot = $1', [activeDotId]);
+        const quotas = {};
+        const adminCutoffs = {}; // Mức điểm tối thiểu (Điểm sàn)
+        const finalCutoffs = {}; // Điểm chuẩn thực tế cuối cùng
+        
+        criteriaRes.rows.forEach(row => {
+            quotas[row.id] = row.soluong;
+            // Nếu Admin chưa chốt điểm thì mặc định là 0
+            const diemSan = row.diemchuan !== null ? parseFloat(row.diemchuan) : 0;
+            adminCutoffs[row.id] = diemSan;
+            finalCutoffs[row.id] = diemSan; // Mặc định giữ nguyên con số Admin đã set
         });
+
+        // 4. Lấy toàn bộ nguyện vọng
+        const nvQuery = `
+            SELECT nv.SBD, nv.ID_ChiTieu, nv.DiemTong, nv.ThuTuUuTien
+            FROM NguyenVong nv
+            JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
+            WHERE ct.MaDot = $1
+            ORDER BY nv.DiemTong DESC, nv.ThuTuUuTien ASC
+        `;
+        const nvRes = await client.query(nvQuery, [activeDotId]);
+
+        const admittedStudents = new Set(); 
+        const passedAspirations = []; 
+
+        // 5. CHẠY THUẬT TOÁN XÉT DUYỆT
+        for (const nv of nvRes.rows) {
+            const { sbd, id_chitieu, diemtong } = nv;
+
+            if (admittedStudents.has(sbd)) continue; 
+
+            const diemTongNumber = parseFloat(diemtong);
+
+            // BẢO VỆ ĐIỂM SÀN: Dưới mức Admin chốt -> Rớt ngay lập tức
+            if (diemTongNumber < adminCutoffs[id_chitieu]) {
+                continue; 
+            }
+
+            // Nếu qua Điểm sàn VÀ ngành còn chỗ
+            if (quotas[id_chitieu] > 0) { 
+                admittedStudents.add(sbd); 
+                passedAspirations.push({ sbd, id_chitieu }); 
+                
+                quotas[id_chitieu]--; 
+
+                // CHỈ CẬP NHẬT ĐIỂM CHUẨN LÊN MỨC MỚI nếu slot cuối cùng của chỉ tiêu bị lấp đầy
+                // (Vì danh sách xếp từ cao xuống thấp, người lấp đầy slot cuối sẽ là người có điểm thấp nhất trong mức an toàn)
+                if (quotas[id_chitieu] === 0) {
+                    finalCutoffs[id_chitieu] = diemTongNumber;
+                }
+            }
+        }
+
+        // 6. LƯU KẾT QUẢ VÀO DATABASE
+        for (const pass of passedAspirations) {
+            await client.query(
+                'UPDATE NguyenVong SET TrangThai = 1 WHERE SBD = $1 AND ID_ChiTieu = $2',
+                [pass.sbd, pass.id_chitieu]
+            );
+        }
+
+        for (const id_chitieu in finalCutoffs) {
+            await client.query(
+                'UPDATE ChiTieuTuyenSinh SET DiemChuan = $1 WHERE ID = $2',
+                [finalCutoffs[id_chitieu], id_chitieu]
+            );
+        }
+
+        // 7. LẤY DANH SÁCH CHI TIẾT
+        const detailQuery = `
+            SELECT 
+                ts.SBD as "sbd", 
+                ts.HoTen as "hoTen", 
+                ct.MaNganh AS "tenNganh", 
+                nv.TrangThai as "trangThai"
+            FROM NguyenVong nv
+            JOIN ThiSinh ts ON nv.SBD = ts.SBD
+            JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
+            WHERE ct.MaDot = $1
+            ORDER BY nv.TrangThai ASC, nv.DiemTong DESC
+        `;
+        const detailsRes = await client.query(detailQuery, [activeDotId]);
+
+        await client.query('COMMIT'); 
+        
+        res.status(200).json({
+            message: 'Thuật toán đã xử lý xong, tôn trọng hoàn toàn Điểm sàn của Admin!',
+            processedCount: detailsRes.rows.length,
+            details: detailsRes.rows
+        });
+
     } catch (error) {
-        console.error('Lỗi khi chạy thuật toán xét tuyển:', error);
-        res.status(500).json({ error: "Lỗi hệ thống khi chạy thuật toán xét tuyển", detail: error.message });
+        await client.query('ROLLBACK'); 
+        console.error('Lỗi chạy thuật toán:', error);
+        res.status(500).json({ error: error.message || 'Lỗi hệ thống khi chạy xét tuyển.' });
+    } finally {
+        client.release();
     }
 };
 
@@ -191,8 +274,10 @@ const generateStudentIds = async (req, res) => {
     const client = await pool.connect(); 
     try {
         await client.query('BEGIN');
+        
+        // Thêm cột ts.HoTen vào truy vấn
         const pendingQuery = `
-            SELECT hs.MaHoSo, ts.SBD, ct.MaNganh 
+            SELECT hs.MaHoSo, ts.SBD, ts.HoTen, ct.MaNganh 
             FROM HoSoNhapHoc hs
             JOIN ThiSinh ts ON hs.SBD = ts.SBD
             JOIN NguyenVong nv ON ts.SBD = nv.SBD AND nv.TrangThai = 1
@@ -202,7 +287,8 @@ const generateStudentIds = async (req, res) => {
         `;
         const pendingStudents = await client.query(pendingQuery);
 
-        let generatedCount = 0;
+        let generatedDetails = []; // Mảng chứa kết quả trả về cho UI
+
         for (let student of pendingStudents.rows) {
             const yearPrefix = new Date().getFullYear().toString().slice(-2); 
             const seqQuery = `
@@ -217,10 +303,21 @@ const generateStudentIds = async (req, res) => {
             const newMSSV = `${yearPrefix}${student.manganh}${nextSeq}`; 
 
             await client.query(`INSERT INTO SinhVien (MSSV, MaHoSo) VALUES ($1, $2)`, [newMSSV, student.mahoso]);
-            generatedCount++;
+            
+            // Ghi nhận chi tiết từng sinh viên được cấp mã
+            generatedDetails.push({
+                sbd: student.sbd,
+                hoTen: student.hoten,
+                maNganh: student.manganh,
+                mssv: newMSSV
+            });
         }
         await client.query('COMMIT');
-        res.status(200).json({ message: `Cấp mã MSSV thành công cho ${generatedCount} sinh viên.` });
+        
+        res.status(200).json({ 
+            message: `Cấp mã MSSV thành công cho ${generatedDetails.length} sinh viên.`,
+            details: generatedDetails // Trả mảng chi tiết về
+        });
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Lỗi cấp MSSV:', error);
@@ -234,10 +331,16 @@ const generateStudentIds = async (req, res) => {
 const getAllCriteria = async (req, res) => {
     try {
         const query = `
-            SELECT ct.ID as "idChiTieu", ct.MaNganh as "maNganh", n.TenNganh as "tenNganh", ct.SoLuong as "soLuong", ct.DiemChuan as "diemChuan"
+            SELECT 
+                ct.ID as "idChiTieu", 
+                ct.MaDot as "maDot", 
+                ct.MaNganh as "maNganh", 
+                n.TenNganh as "tenNganh",
+                ct.SoLuong as "soLuong", 
+                ct.DiemChuan as "diemChuan"
             FROM ChiTieuTuyenSinh ct
             JOIN Nganh n ON ct.MaNganh = n.MaNganh
-            ORDER BY ct.MaNganh ASC;
+            ORDER BY ct.MaDot DESC, ct.MaNganh ASC
         `;
         const result = await pool.query(query);
         res.status(200).json({ data: result.rows });
@@ -256,7 +359,13 @@ const getDashboardStats = async (req, res) => {
         const tongHoSoRes = await pool.query('SELECT COUNT(*) FROM HoSoNhapHoc');
         const tongHoSo = parseInt(tongHoSoRes.rows[0].count);
 
-        const chuaNop = tongThiSinh - tongHoSo; 
+        // Đếm số lượng thí sinh đã trúng tuyển (Distinct để không đếm trùng SBD)
+        const trungTuyenRes = await pool.query('SELECT COUNT(DISTINCT SBD) FROM NguyenVong WHERE TrangThai = 1');
+        const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
+
+        // LOGIC MỚI: Thí sinh chưa nộp hồ sơ = Tổng người đã đậu - Tổng hồ sơ đã tạo
+        let chuaNop = trungTuyen - tongHoSo; 
+        if (chuaNop < 0) chuaNop = 0; // Đảm bảo số liệu không bị âm nếu có sai lệch nhỏ
 
         const trangThaiRes = await pool.query(`SELECT TrangThai, COUNT(*) as count FROM HoSoNhapHoc GROUP BY TrangThai`);
         let hoSoChoDuyet = 0;
@@ -269,9 +378,6 @@ const getDashboardStats = async (req, res) => {
             if (row.trangthai === 3) name = 'Yêu cầu bổ sung';
             return { name, value: count, trangThai: row.trangthai };
         });
-
-        const trungTuyenRes = await pool.query('SELECT COUNT(*) FROM NguyenVong WHERE TrangThai = 1');
-        const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
 
         const mssvRes = await pool.query('SELECT COUNT(*) FROM SinhVien');
         const daCapMssv = parseInt(mssvRes.rows[0].count);
@@ -349,16 +455,58 @@ const toggleLockOfficer = async (req, res) => {
 };
 
 // --- UC09: QUẢN LÝ DANH MỤC NGÀNH/KHOA ---
+// [POST] Thêm ngành mới
 const createNganhCatalog = async (req, res) => {
     const { maNganh, tenNganh, maKhoa } = req.body;
     try {
+        // Kiểm tra xem mã ngành đã tồn tại chưa
+        const checkExist = await pool.query('SELECT MaNganh FROM Nganh WHERE MaNganh = $1', [maNganh.toUpperCase()]);
+        if (checkExist.rows.length > 0) {
+            return res.status(400).json({ error: 'Mã ngành này đã tồn tại trong hệ thống!' });
+        }
+
         await pool.query(
             `INSERT INTO Nganh (MaNganh, TenNganh, MaKhoa) VALUES ($1, $2, $3)`,
-            [maNganh, tenNganh, maKhoa]
+            [maNganh.toUpperCase(), tenNganh, maKhoa]
         );
         res.status(201).json({ message: 'Thêm ngành học vào danh mục thành công.' });
     } catch (error) {
-        res.status(500).json({ message: 'Lỗi hệ thống khi thêm ngành danh mục.' });
+        console.error('Lỗi thêm ngành:', error);
+        res.status(500).json({ error: 'Lỗi hệ thống khi thêm ngành danh mục.' });
+    }
+};
+
+// [PUT] Cập nhật thông tin ngành
+const updateNganhCatalog = async (req, res) => {
+    const { id } = req.params; // Sử dụng id (Mã ngành) truyền từ URL
+    const { tenNganh, maKhoa } = req.body;
+    try {
+        await pool.query(
+            `UPDATE Nganh SET TenNganh = $1, MaKhoa = $2 WHERE MaNganh = $3`,
+            [tenNganh, maKhoa, id]
+        );
+        res.status(200).json({ message: 'Cập nhật thông tin ngành thành công.' });
+    } catch (error) {
+        console.error('Lỗi cập nhật ngành:', error);
+        res.status(500).json({ error: 'Lỗi hệ thống khi cập nhật thông tin ngành.' });
+    }
+};
+
+// [DELETE] Xóa ngành
+const deleteNganhCatalog = async (req, res) => {
+    const { id } = req.params;
+    try {
+        // RÀNG BUỘC: Kiểm tra xem ngành này đã từng được thiết lập chỉ tiêu chưa
+        const checkUsage = await pool.query('SELECT ID FROM ChiTieuTuyenSinh WHERE MaNganh = $1 LIMIT 1', [id]);
+        if (checkUsage.rows.length > 0) {
+            return res.status(400).json({ error: 'Không thể xóa! Ngành học này đang được sử dụng trong các Đợt Tuyển Sinh.' });
+        }
+
+        await pool.query(`DELETE FROM Nganh WHERE MaNganh = $1`, [id]);
+        res.status(200).json({ message: 'Đã xóa ngành học khỏi hệ thống thành công.' });
+    } catch (error) {
+        console.error('Lỗi xóa ngành:', error);
+        res.status(500).json({ error: 'Lỗi hệ thống khi xóa ngành.' });
     }
 };
 
@@ -381,12 +529,23 @@ const createDotTuyenSinh = async (req, res) => {
 const addChiTieu = async (req, res) => {
     const { maDot, maNganh, soLuong } = req.body;
     try {
-        const result = await pool.query(
-            `INSERT INTO ChiTieuTuyenSinh (MaDot, MaNganh, SoLuong) VALUES ($1, $2, $3) RETURNING *`,
-            [maDot, maNganh, soLuong]
-        );
-        res.status(201).json({ message: 'Cấu hình chỉ tiêu cho ngành thành công.', data: result.rows[0] });
+        // Kiểm tra xem chỉ tiêu cho ngành này trong đợt này đã tồn tại chưa
+        const checkQuery = 'SELECT ID FROM ChiTieuTuyenSinh WHERE MaDot = $1 AND MaNganh = $2';
+        const checkResult = await pool.query(checkQuery, [maDot, maNganh]);
+
+        if (checkResult.rows.length > 0) {
+            // Nếu ĐÃ TỒN TẠI -> Ghi đè (Cập nhật) số lượng mới
+            const updateQuery = 'UPDATE ChiTieuTuyenSinh SET SoLuong = $1 WHERE MaDot = $2 AND MaNganh = $3 RETURNING *';
+            const updateResult = await pool.query(updateQuery, [soLuong, maDot, maNganh]);
+            res.status(200).json({ message: 'Đã cập nhật lại số lượng chỉ tiêu thành công.', data: updateResult.rows[0] });
+        } else {
+            // Nếu CHƯA TỒN TẠI -> Thêm mới hoàn toàn
+            const insertQuery = 'INSERT INTO ChiTieuTuyenSinh (MaDot, MaNganh, SoLuong) VALUES ($1, $2, $3) RETURNING *';
+            const insertResult = await pool.query(insertQuery, [maDot, maNganh, soLuong]);
+            res.status(201).json({ message: 'Phân bổ chỉ tiêu mới thành công.', data: insertResult.rows[0] });
+        }
     } catch (error) {
+        console.error('Lỗi khi cấu hình chỉ tiêu:', error);
         res.status(500).json({ message: 'Lỗi khi cấu hình chỉ tiêu.' });
     }
 };
@@ -412,6 +571,145 @@ const resetOfficerPassword = async (req, res) => {
     }
 };
 
+// [GET] Lấy danh sách lịch sử Đợt tuyển sinh
+const getAllDots = async (req, res) => {
+    try {
+        // Sửa ID thành MaDot
+        const query = `
+            SELECT MaDot as "id", TenDot as "tenDot", NamHoc as "namHoc", IsActive as "isActive" 
+            FROM DotTuyenSinh ORDER BY MaDot DESC
+        `;
+        const result = await pool.query(query);
+        res.status(200).json({ data: result.rows });
+    } catch (error) {
+        console.error('Lỗi khi lấy danh sách đợt:', error);
+        res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách đợt" });
+    }
+};
+
+// [GET] Lấy danh sách tất cả các ngành trong hệ thống để làm dropdown
+const getAllNganh = async (req, res) => {
+    try {
+        const query = 'SELECT MaNganh AS "maNganh", TenNganh AS "tenNganh" FROM Nganh ORDER BY TenNganh ASC';
+        const result = await pool.query(query);
+        res.status(200).json({ data: result.rows });
+    } catch (error) {
+        console.error('Lỗi khi lấy danh sách ngành:', error);
+        res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách ngành" });
+    }
+};
+
+const importCandidates = async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'Vui lòng đính kèm một file Excel (.xlsx hoặc .xls).' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN'); // Bắt đầu Transaction
+
+        const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rawData = xlsx.utils.sheet_to_json(sheet);
+
+        const importedDetails = [];
+
+        for (const row of rawData) {
+            // --- 1. ĐỌC THÔNG TIN CÁ NHÂN ---
+            const sbd = row['SBD'] || row['Số báo danh'];
+            const cccd = row['CCCD'] || row['Số CCCD'] || row['CMND'];
+            const hoTen = row['HoTen'] || row['Họ tên'] || row['Họ và tên'];
+            const ngaySinh = row['NgaySinh'] || row['Ngày sinh'];
+            const gioiTinh = row['GioiTinh'] || row['Giới tính'] === 'Nam' || row['Giới tính'] === true;
+            const email = row['Email'];
+            const sdt = row['SDT'] || row['Số điện thoại'] || row['SĐT'];
+            const khuVuc = row['KhuVuc'] || row['Khu vực'] || 'KV3';
+
+            if (!sbd || !cccd || !hoTen || !email) continue;
+
+            // Upsert vào bảng ThiSinh
+            const insertThiSinhQuery = `
+                INSERT INTO ThiSinh (SBD, CCCD, HoTen, NgaySinh, GioiTinh, Email, SDT, KhuVuc)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (SBD) DO UPDATE 
+                SET CCCD = EXCLUDED.CCCD, HoTen = EXCLUDED.HoTen, NgaySinh = EXCLUDED.NgaySinh, 
+                    GioiTinh = EXCLUDED.GioiTinh, Email = EXCLUDED.Email, SDT = EXCLUDED.SDT, KhuVuc = EXCLUDED.KhuVuc
+                RETURNING *;
+            `;
+            const tsResult = await client.query(insertThiSinhQuery, [sbd, cccd, hoTen, ngaySinh, gioiTinh, email, sdt, khuVuc]);
+            const savedSBD = tsResult.rows[0].sbd;
+
+            // --- 2. ĐỌC VÀ LƯU ĐIỂM SỐ (Bảng ChiTietDiem) ---
+            const scoreColumns = Object.keys(row).filter(key => key.toUpperCase().startsWith('DIEM_'));
+            
+            for (const col of scoreColumns) {
+                const maMon = col.split('_')[1].toUpperCase(); 
+                const diem = parseFloat(row[col]);
+                
+                if (!isNaN(diem)) {
+                    await client.query('DELETE FROM ChiTietDiem WHERE SBD = $1 AND MaMon = $2', [savedSBD, maMon]);
+                    await client.query('INSERT INTO ChiTietDiem (SBD, MaMon, Diem) VALUES ($1, $2, $3)', [savedSBD, maMon, diem]);
+                }
+            }
+
+            // --- 3. ĐỌC VÀ LƯU NGUYỆN VỌNG (Bảng NguyenVong) ---
+            const maNganh = row['MaNganh'] || row['Mã ngành'];
+            const diemTong = parseFloat(row['DiemTong'] || row['Điểm tổng']);
+
+            if (maNganh && !isNaN(diemTong)) {
+                // 3.1 TÌM ĐỢT ĐANG MỞ
+                const activeDotRes = await client.query('SELECT MaDot FROM DotTuyenSinh WHERE IsActive = true LIMIT 1');
+                
+                if (activeDotRes.rows.length > 0) {
+                    const activeDotId = activeDotRes.rows[0].madot;
+
+                    // 3.2 TÌM ID CHỈ TIÊU tương ứng với Mã Ngành trong Đợt đang mở
+                    const checkChiTieu = await client.query(
+                        'SELECT ID FROM ChiTieuTuyenSinh WHERE MaDot = $1 AND MaNganh = $2', 
+                        [activeDotId, maNganh.toUpperCase()]
+                    );
+
+                    // 3.3 NẾU CÓ CHỈ TIÊU -> NẠP NGUYỆN VỌNG VÀO DATABASE
+                    if (checkChiTieu.rows.length > 0) {
+                        const idChiTieu = checkChiTieu.rows[0].id;
+                        
+                        await client.query('DELETE FROM NguyenVong WHERE SBD = $1 AND ThuTuUuTien = 1', [savedSBD]);
+                        await client.query('DELETE FROM NguyenVong WHERE SBD = $1 AND ID_ChiTieu = $2', [savedSBD, idChiTieu]);
+                        
+                        await client.query(
+                            'INSERT INTO NguyenVong (SBD, ID_ChiTieu, ThuTuUuTien, DiemTong, TrangThai) VALUES ($1, $2, $3, $4, 0)', 
+                            [savedSBD, idChiTieu, 1, diemTong]
+                        );
+                    } else {
+                        console.warn(`[Cảnh báo] Bỏ qua nguyện vọng của SBD ${savedSBD}: Ngành ${maNganh} chưa được mở chỉ tiêu trong đợt này.`);
+                    }
+                }
+            }
+
+            importedDetails.push({
+                sbd: savedSBD,
+                hoTen: tsResult.rows[0].hoten,
+                email: tsResult.rows[0].email,
+                khuVuc: tsResult.rows[0].khuvuc
+            });
+        }
+
+        await client.query('COMMIT');
+        
+        res.status(200).json({
+            message: `Đã nhập thành công ${importedDetails.length} hồ sơ (Bao gồm thông tin cá nhân, điểm thành phần và nguyện vọng).`,
+            details: importedDetails 
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Lỗi thực thi import file Excel:', error);
+        res.status(500).json({ error: 'Lỗi máy chủ khi bóc tách file Excel. Chi tiết: ' + error.message });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     getPendingApplications,
     getApplicationDetails,
@@ -429,5 +727,10 @@ module.exports = {
     createNganhCatalog,
     createDotTuyenSinh,
     addChiTieu,
-    resetOfficerPassword
+    resetOfficerPassword,
+    getAllDots,
+    getAllNganh,
+    importCandidates,
+    updateNganhCatalog,
+    deleteNganhCatalog
 };

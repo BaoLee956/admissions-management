@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { verifyToken, checkRole } = require('../middlewares/auth.middleware');
+const { upload } = require('../middlewares/upload.middleware');
 
 // Khóa bảo mật cấp cao: Chỉ những tài khoản đăng nhập có quyền 'ADMIN' mới đi qua được cụm Route dưới đây
 router.use(verifyToken);
@@ -21,7 +22,18 @@ router.put('/officers/:id/toggle-lock', adminController.toggleLockOfficer); // K
 router.post('/categories/nganh', adminController.createNganhCatalog);    // Thêm ngành học mới
 
 // --- UC10: QUẢN LÝ CẤU HÌNH ĐỢT TUYỂN SINH & CHỈ TIÊU (Độc quyền Admin) ---
+router.get('/admissions/dot', adminController.getAllDots);
 router.post('/admissions/dot', adminController.createDotTuyenSinh);      // Tạo đợt tuyển sinh mới
-router.post('/admissions/chitieu', adminController.addChiTieu);          // Phân bổ chỉ tiêu ngành
+router.post('/admissions/chitieu', adminController.addChiTieu);
+router.get('/admissions/chitieu', adminController.getAllCriteria);
+router.put('/admissions/chitieu/diem-chuan', adminController.updateDiemChuan);
+router.post('/admissions/process', adminController.processAdmissions);
+router.post('/admissions/generate-mssv', adminController.generateStudentIds);
+router.get('/categories/nganh', adminController.getAllNganh);
+router.post(
+    '/admissions/import-candidates', 
+    upload.single('file'),
+    adminController.importCandidates
+);          //    Phân bổ chỉ tiêu ngành
 router.put('/users/:id/reset-password', adminController.resetOfficerPassword);
 module.exports = router;

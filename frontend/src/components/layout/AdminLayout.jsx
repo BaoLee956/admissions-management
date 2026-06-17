@@ -54,17 +54,17 @@ const AdminLayout = () => {
     },
     {
       path: '/admin/officers',
-      name: 'Quản lý Cán bộ (UC08)',
+      name: 'Quản lý Cán bộ',
       icon: <UsersRound size={20} />
     },
     {
-      path: '/admin/admissions-setup',
-      name: 'Đợt & Chỉ tiêu (UC10)',
+      path: '/admin/admissions-config',
+      name: 'Cấu hình tuyển sinh',
       icon: <Settings2 size={20} />
     },
     {
       path: '/admin/categories',
-      name: 'Danh mục Ngành (UC09)',
+      name: 'Danh mục Ngành học',
       icon: <Database size={20} />
     }
   ];

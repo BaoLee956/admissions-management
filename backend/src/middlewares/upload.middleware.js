@@ -5,7 +5,14 @@ const storage = multer.memoryStorage();
 
 // Bộ lọc định dạng file (Chỉ nhận JPG, PNG, PDF)
 const fileFilter = (req, file, cb) => {
-    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+    const allowedMimeTypes = [
+        'image/jpeg', 
+        'image/jpg', 
+        'image/png', 
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // File .xlsx
+        'application/vnd.ms-excel' // File .xls
+    ];
     
     if (allowedMimeTypes.includes(file.mimetype)) {
         cb(null, true);

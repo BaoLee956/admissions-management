@@ -18,6 +18,8 @@ import OfficerApplications from './pages/officer/OfficerApplications';
 
 // --- Imports Pages Admin ---
 import AdminOfficers from './pages/admin/AdminOfficers';
+import AdminAdmissionsConfig from './pages/admin/AdminAdmissionsConfig';
+import AdminMajors from './pages/admin/AdminMajors';
 
 function App() {
   return (
@@ -47,8 +49,9 @@ function App() {
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<OfficerDashboard />} />
             <Route path="officers" element={<AdminOfficers />} />
-            <Route path="admissions-setup" element={<div>Trang thiết lập chỉ tiêu đang xây dựng...</div>} />
-            <Route path="categories" element={<div>Trang danh mục đang xây dựng...</div>} />
+            <Route path="categories" element={<AdminMajors />} />
+            <Route path="admissions-config" element={<AdminAdmissionsConfig />} />
+            
           </Route>
 
         </Route>
