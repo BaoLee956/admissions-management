@@ -8,13 +8,12 @@ import {
   ChevronDown,
   AlertCircle,
   XCircle,
-  Clock, // Bổ sung icon
+  Clock,
   Loader2
 } from 'lucide-react';
 import apiClient from '../../utils/api';
 
 const CandidatePortal = () => {
-  // --- States ---
   const [step, setStep] = useState(1);
   const [countdown, setCountdown] = useState(59);
   const [showDetails, setShowDetails] = useState(false);
@@ -25,7 +24,6 @@ const CandidatePortal = () => {
   const [formData, setFormData] = useState({ sbd: '', cccd: '', otp: '' });
   const [files, setFiles] = useState({ cccd: null, hocBa: null, giayBao: null });
 
-  // --- Handlers ---
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -91,7 +89,6 @@ const CandidatePortal = () => {
     setMessage({ type: '', text: '' });
     try {
       await apiClient.put('/candidates/me/confirm-enrollment', { daXacNhanNhapHoc: true });
-      // Bổ sung set trạng thái hồ sơ ảo = 0 (Nháp) để UI hiện đúng nút "Tiếp tục hoàn thiện"
       setAdmissionResult(prev => ({ ...prev, daXacNhanNhapHoc: true, trangThaiHoSo: 0 }));
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Có lỗi xảy ra khi xác nhận nhập học.';
@@ -162,7 +159,6 @@ const CandidatePortal = () => {
     return () => clearInterval(timer);
   }, [step, countdown]);
 
-  // --- Renders ---
   const renderMessage = () => {
     if (!message.text) return null;
     const isError = message.type === 'error';
@@ -407,7 +403,6 @@ const CandidatePortal = () => {
                 </table>
               </div>
 
-              {/* LOGIC CHẶN HỒ SƠ SAU KHI NỘP - THEO 4 TRẠNG THÁI */}
               {isPassed && (
                 !admissionResult.daXacNhanNhapHoc ? (
                   <button 
@@ -457,8 +452,8 @@ const CandidatePortal = () => {
                                 <AlertCircle size={24} className="shrink-0 mt-0.5" />
                                 <div>
                                     <p className="font-bold text-sm">Hồ sơ có sai sót cần bổ sung</p>
-                                    <p className="text-xs mt-1 text-red-600">
-                                        Cán bộ đã yêu cầu cập nhật lại minh chứng. Vui lòng bổ sung ngay để không ảnh hưởng tiến độ nhập học.
+                                    <p className="text-xs mt-1 text-red-600 font-medium italic">
+                                        Lý do: "{admissionResult.ghiChu || "Cán bộ đã yêu cầu cập nhật lại minh chứng. Vui lòng bổ sung ngay."}"
                                     </p>
                                 </div>
                             </div>
@@ -466,7 +461,7 @@ const CandidatePortal = () => {
                                 onClick={() => setStep(4)} 
                                 className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-sm transition-all"
                             >
-                                Nhấn vào đây để cập nhật hồ sơ
+                                Nhấn vào đây để tải lại hồ sơ
                             </button>
                         </div>
                     ) : null}

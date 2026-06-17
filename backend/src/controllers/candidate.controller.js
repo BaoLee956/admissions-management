@@ -14,7 +14,8 @@ const getAdmissionResult = async (req, res) => {
                 nv.DiemTong AS "diemCuaBan",
                 ct.DiemChuan AS "diemChuan",
                 nv.TrangThai AS "trangThaiKetQua",
-                hs.TrangThai AS "trangThaiHoSo"
+                hs.TrangThai AS "trangThaiHoSo",
+                hs.GhiChu AS "ghiChu"
             FROM ThiSinh ts
             LEFT JOIN NguyenVong nv ON ts.SBD = nv.SBD
             LEFT JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
@@ -57,7 +58,8 @@ const getAdmissionResult = async (req, res) => {
                 diemUuTien: getDiemUuTien(data.khuVuc),
                 trangThai: data.trangThaiKetQua === 1 ? 'TRUNG_TUYEN' : 'KHONG_TRUNG_TUYEN',
                 daXacNhanNhapHoc: data.trangThaiHoSo !== null, 
-                trangThaiHoSo: data.trangThaiHoSo, // BỔ SUNG: Truyền trực tiếp trạng thái hồ sơ cho Frontend
+                trangThaiHoSo: data.trangThaiHoSo,
+                ghiChu: data.ghiChu,
                 diemChiTiet: resultDiem.rows
             }
         });
@@ -124,7 +126,7 @@ const uploadDocument = async (req, res) => {
         
         const hoSo = hoSoResult.rows[0];
 
-        if (hoSo.trangthai !== 0 && hoSo.trangthai !== 3) { // 0: Nháp, 3: Yêu cầu bổ sung
+        if (hoSo.trangthai !== 0 && hoSo.trangthai !== 3) { 
             return res.status(400).json({ 
                 error: { 
                     code: 'APPLICATION_SUBMITTED', 
@@ -135,7 +137,6 @@ const uploadDocument = async (req, res) => {
 
         const maHoSo = hoSo.mahoso;
 
-        // Mã hóa file từ RAM và đẩy lên Cloudinary
         const b64 = Buffer.from(req.file.buffer).toString("base64");
         const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
         
@@ -144,6 +145,16 @@ const uploadDocument = async (req, res) => {
             resource_type: 'auto'
         });
 
+        // ----------------------------------------------------------------------
+        // FIX LỖI TÍCH LŨY FILE CŨ: Xóa file cũ của cùng mã loại trước khi thêm mới
+        // ----------------------------------------------------------------------
+        const deleteOldDocQuery = `
+            DELETE FROM GiayToDinhKem 
+            WHERE MaHoSo = $1 AND MaLoai = $2
+        `;
+        await pool.query(deleteOldDocQuery, [maHoSo, maLoai]);
+
+        // Thêm file mới vào database
         const insertDocQuery = `
             INSERT INTO GiayToDinhKem (MaHoSo, MaLoai, DuongDanFile, TrangThaiFile)
             VALUES ($1, $2, $3, 1)
@@ -183,7 +194,6 @@ const submitApplication = async (req, res) => {
             return res.status(400).json({ message: 'Hồ sơ này đã được nộp hoặc đang được xử lý.' });
         }
 
-        // Kiểm tra xem đã nộp đủ các loại giấy tờ Bắt Buộc chưa
         const checkMissingDocsQuery = `
             SELECT l.MaLoai, l.TenLoai
             FROM LoaiGiayTo l
@@ -204,7 +214,6 @@ const submitApplication = async (req, res) => {
             });
         }
 
-        // Đủ giấy tờ -> Cập nhật trạng thái sang "Chờ duyệt" (1)
         const updateQuery = 'UPDATE HoSoNhapHoc SET TrangThai = 1 WHERE MaHoSo = $1';
         await pool.query(updateQuery, [hoSo.mahoso]);
 

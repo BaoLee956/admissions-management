@@ -37,7 +37,6 @@ const OfficerApplications = () => {
       const response = await api.get('/officer/applications/pending', {
         headers: getAuthHeader()
       });
-      // Giả sử API trả về mảng trực tiếp hoặc nằm trong response.data.data
       const data = response.data?.data || response.data || [];
       setApplications(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -52,27 +51,27 @@ const OfficerApplications = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filter danh sách theo Tên hoặc SBD
+  // Filter danh sách theo Tên, SBD hoặc Mã hồ sơ
   const filteredApps = useMemo(() => {
     if (!searchQuery.trim()) return applications;
     const q = searchQuery.toLowerCase();
     return applications.filter(app => 
       (app.sbd && app.sbd.toLowerCase().includes(q)) ||
       (app.hoTen && app.hoTen.toLowerCase().includes(q)) ||
-      (app.thongTinChung?.hoTen && app.thongTinChung.hoTen.toLowerCase().includes(q)) ||
-      (app.id && String(app.id).includes(q))
+      (app.maHoSo && String(app.maHoSo).includes(q))
     );
   }, [applications, searchQuery]);
 
   // 2. Mở Modal Chi tiết & Gọi API lấy thông tin cụ thể
-  const handleOpenModal = async (id) => {
+  const handleOpenModal = async (maHoSo) => {
     setIsModalOpen(true);
     setLoadingDetail(true);
     setSelectedApp(null);
     setReviewReason('');
     
     try {
-      const response = await api.get(`/officer/applications/${id}`, {
+      // Đã sửa lại đúng tham số maHoSo
+      const response = await api.get(`/officer/applications/${maHoSo}`, {
         headers: getAuthHeader()
       });
       setSelectedApp(response.data?.data || response.data);
@@ -93,7 +92,6 @@ const OfficerApplications = () => {
 
   // 3. Phê duyệt hoặc Yêu cầu bổ sung (UC4)
   const handleReviewAction = async (statusId) => {
-    // Nếu Yêu cầu bổ sung (3), bắt buộc nhập lý do
     if (statusId === 3 && !reviewReason.trim()) {
       alert('Vui lòng nhập Lý do khi Yêu cầu bổ sung hồ sơ!');
       return;
@@ -101,16 +99,16 @@ const OfficerApplications = () => {
 
     setIsSubmitting(true);
     try {
-      await api.put(`/officer/applications/${selectedApp.id}/review`, {
+      // Đã cập nhật lại endpoint gọi bằng mã hồ sơ chuẩn
+      await api.put(`/officer/applications/${selectedApp.maHoSo}/review`, {
         trangThai: statusId,
         lyDo: reviewReason.trim()
       }, {
         headers: getAuthHeader()
       });
       
-      // Xử lý thành công
       handleCloseModal();
-      await fetchPendingApplications(); // Load lại bảng
+      await fetchPendingApplications(); 
     } catch (error) {
       console.error('Lỗi xử lý hồ sơ:', error);
       alert(error.response?.data?.message || 'Đã xảy ra lỗi khi duyệt hồ sơ.');
@@ -119,7 +117,6 @@ const OfficerApplications = () => {
     }
   };
 
-  // Format Date (d/m/y)
   const formatDate = (dateString) => {
     if (!dateString) return 'Chưa cập nhật';
     try {
@@ -140,7 +137,6 @@ const OfficerApplications = () => {
           <p className="text-sm text-gray-500 mt-1">Danh sách và chức năng phê duyệt hồ sơ đăng ký dự tuyển</p>
         </div>
         
-        {/* Badge Tông màu cam */}
         <div className="inline-flex items-center gap-2 bg-orange-100 border border-orange-200 text-orange-800 px-4 py-2 rounded-xl font-bold shadow-sm">
           <Clock size={18} />
           <span>{applications.length} Hồ sơ chờ duyệt</span>
@@ -156,7 +152,7 @@ const OfficerApplications = () => {
           <input
             type="text"
             className="block w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-transparent bg-gray-50 outline-none text-sm transition-shadow"
-            placeholder="Tìm kiếm theo Họ tên hoặc SBD..."
+            placeholder="Tìm kiếm theo Mã HS, Họ tên hoặc SBD..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -167,13 +163,11 @@ const OfficerApplications = () => {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden min-h-[400px] flex flex-col">
         <div className="flex-1 overflow-auto">
           {loadingList ? (
-            // Trạng thái Đang tải
             <div className="flex flex-col items-center justify-center h-64 text-gray-400">
               <Loader2 className="animate-spin mb-3 text-[#b71a22]" size={32} />
               <p>Đang tải danh sách hồ sơ chờ duyệt...</p>
             </div>
           ) : filteredApps.length === 0 ? (
-            // Trạng thái Trống
             <div className="flex flex-col items-center justify-center h-64 text-gray-400">
               <div className="bg-gray-50 p-4 rounded-full mb-3">
                 <FileCheck2 size={40} className="text-gray-300" />
@@ -182,43 +176,35 @@ const OfficerApplications = () => {
               <p className="text-sm mt-1">Hoặc không tìm thấy hồ sơ khớp với từ khóa của bạn.</p>
             </div>
           ) : (
-            // Bảng Dữ liệu
             <table className="w-full text-left border-collapse">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Mã Hồ Sơ</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b">SBD</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b">Họ Tên</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b text-center">CCCD</th>
-                  <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b text-center">Khu Vực</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b text-center">Ngành Xét Tuyển</th>
+                  <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b text-center">Ngày Nộp</th>
                   <th className="py-4 px-6 text-xs font-bold text-gray-500 uppercase tracking-wider border-b text-center">Hành Động</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredApps.map((app) => {
-                  // Fallback thông tin trong trường hợp data chưa đồng nhất
-                  const info = app.thongTinChung || app;
-                  return (
-                    <tr key={app.id} className="hover:bg-red-50/20 transition-colors">
-                      <td className="py-4 px-6 text-sm font-bold text-[#b71a22]">#{app.id}</td>
-                      <td className="py-4 px-6 text-sm font-medium text-gray-700">{info.sbd || 'N/A'}</td>
-                      <td className="py-4 px-6 text-sm font-medium text-gray-900">{info.hoTen}</td>
-                      <td className="py-4 px-6 text-sm text-center text-gray-600">{info.cccd}</td>
-                      <td className="py-4 px-6 text-sm text-center text-gray-600 font-medium">
-                        {info.khuVucUuTien || 'KV3'}
-                      </td>
-                      <td className="py-4 px-6 text-center">
-                        <button
-                          onClick={() => handleOpenModal(app.id)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg text-sm font-medium transition-all shadow-sm"
-                        >
-                          <Eye size={16} />
-                          Xem & Duyệt
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filteredApps.map((app) => (
+                  <tr key={app.maHoSo} className="hover:bg-red-50/20 transition-colors">
+                    <td className="py-4 px-6 text-sm font-bold text-[#b71a22]">#{app.maHoSo}</td>
+                    <td className="py-4 px-6 text-sm font-medium text-gray-700">{app.sbd || '--'}</td>
+                    <td className="py-4 px-6 text-sm font-medium text-gray-900">{app.hoTen || '--'}</td>
+                    <td className="py-4 px-6 text-sm text-center text-gray-600 font-medium">{app.tenNganh || '--'}</td>
+                    <td className="py-4 px-6 text-sm text-center text-gray-600 font-medium">{formatDate(app.ngayNop)}</td>
+                    <td className="py-4 px-6 text-center">
+                      <button
+                        onClick={() => handleOpenModal(app.maHoSo)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg text-sm font-medium transition-all shadow-sm"
+                      >
+                        <Eye size={16} /> Xem & Duyệt
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -233,7 +219,7 @@ const OfficerApplications = () => {
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
               <h3 className="text-xl font-bold text-gray-900">
-                Chi tiết Hồ sơ <span className="text-[#b71a22]">#{selectedApp?.id || '...'}</span>
+                Chi tiết Hồ sơ <span className="text-[#b71a22]">#{selectedApp?.maHoSo || '...'}</span>
               </h3>
               <button 
                 onClick={handleCloseModal}
@@ -262,44 +248,42 @@ const OfficerApplications = () => {
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Họ và Tên</p>
-                          <p className="font-bold text-gray-900">{selectedApp.thongTinChung?.hoTen}</p>
+                          <p className="font-bold text-gray-900">{selectedApp.hoTen || '--'}</p>
                         </div>
                         <div>
                           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Số báo danh</p>
-                          <p className="font-bold text-gray-900">{selectedApp.thongTinChung?.sbd}</p>
+                          <p className="font-bold text-gray-900">{selectedApp.sbd || '--'}</p>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-50">
                         <div>
                           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">CCCD / CMND</p>
-                          <p className="font-medium text-gray-800">{selectedApp.thongTinChung?.cccd}</p>
+                          <p className="font-medium text-gray-800">{selectedApp.cccd || '--'}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Giới tính</p>
-                          <p className="font-medium text-gray-800">
-                            {selectedApp.thongTinChung?.gioiTinh === 1 || selectedApp.thongTinChung?.gioiTinh === 'Nam' ? 'Nam' : 'Nữ'}
-                          </p>
+                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Ngày nộp hồ sơ</p>
+                          <p className="font-medium text-gray-800">{formatDate(selectedApp.ngayNop)}</p>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-50">
+                      <div className="grid grid-cols-1 gap-4 pt-3 border-t border-gray-50">
                         <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Ngày sinh</p>
-                          <p className="font-medium text-gray-800">{formatDate(selectedApp.thongTinChung?.ngaySinh)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Khu vực ưu tiên</p>
-                          <p className="font-bold text-[#b71a22] bg-red-50 inline-block px-2 py-0.5 rounded text-sm">
-                            {selectedApp.thongTinChung?.khuVucUuTien || 'Không có'}
+                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Ngành Trúng Tuyển</p>
+                          <p className="font-bold text-[#b71a22] bg-red-50 inline-block px-3 py-1 rounded text-sm mt-1">
+                            {selectedApp.tenNganh || '---'}
                           </p>
                         </div>
                       </div>
 
                       <div className="pt-3 border-t border-gray-50">
-                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Liên hệ</p>
-                        <p className="text-sm font-medium text-gray-800 mb-1">{selectedApp.thongTinChung?.email}</p>
-                        <p className="text-sm font-medium text-gray-800">{selectedApp.thongTinChung?.soDienThoai}</p>
+                        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Thông tin Liên hệ</p>
+                        <p className="text-sm font-medium text-gray-800 mb-1 flex items-center gap-2">
+                           Email: <span className="text-indigo-600">{selectedApp.email || 'Chưa cập nhật'}</span>
+                        </p>
+                        <p className="text-sm font-medium text-gray-800 flex items-center gap-2">
+                           Số điện thoại: <span className="text-indigo-600">{selectedApp.sdt || 'Chưa cập nhật'}</span>
+                        </p>
                       </div>
 
                     </div>
@@ -309,12 +293,12 @@ const OfficerApplications = () => {
                   <div className="space-y-6 flex flex-col">
                     <h4 className="text-lg font-bold text-gray-800 border-b pb-2">Hồ sơ Minh chứng</h4>
                     
-                    {/* Danh sách giấy tờ */}
+                    {/* Danh sách giấy tờ (Đồng bộ biến documents và tenLoai từ Backend) */}
                     <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex-1 space-y-3 max-h-[250px] overflow-y-auto">
-                      {selectedApp.giayToMinhChung && selectedApp.giayToMinhChung.length > 0 ? (
-                        selectedApp.giayToMinhChung.map((doc, idx) => (
+                      {selectedApp.documents && selectedApp.documents.length > 0 ? (
+                        selectedApp.documents.map((doc, idx) => (
                           <a 
-                            key={idx}
+                            key={doc.id || idx}
                             href={doc.duongDanFile}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -324,7 +308,7 @@ const OfficerApplications = () => {
                               <FileText size={20} />
                             </div>
                             <span className="flex-1 text-sm font-medium truncate">
-                              {doc.loaiGiayTo || `Tài liệu đính kèm ${idx + 1}`}
+                              {doc.tenLoai || `Tài liệu đính kèm ${idx + 1}`}
                             </span>
                             <Eye size={18} className="text-gray-400 group-hover:text-blue-500" />
                           </a>
@@ -337,7 +321,7 @@ const OfficerApplications = () => {
                       )}
                     </div>
 
-                    {/* Form Lý do (Bắt buộc nếu Từ chối/Bổ sung) */}
+                    {/* Form Lý do */}
                     <div>
                       <label className="block text-sm font-bold text-gray-700 mb-2">
                         Lý do (Yêu cầu nhập nếu Yêu cầu bổ sung)

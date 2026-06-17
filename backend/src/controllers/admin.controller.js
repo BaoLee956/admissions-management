@@ -1,30 +1,35 @@
 const { pool } = require('../config/database');
 const bcrypt = require('bcrypt');
 const xlsx = require('xlsx');
+const nodemailer = require('nodemailer');
 
 // ========================================================
 // 1. NHÓM API QUẢN LÝ VÀ DUYỆT HỒ SƠ (UC 3 & UC 4)
 // ========================================================
 
-// [GET] Lấy danh sách hồ sơ có trạng thái Chờ duyệt (TrangThai = 1)
+// [GET] Lấy danh sách hồ sơ
 const getPendingApplications = async (req, res) => {
     try {
+        // CẬP NHẬT: Ép kiểu chuẩn tên cột AS "maHoSo" và JOIN thêm bảng để lấy thông tin ngành, ngày nộp
         const query = `
             SELECT 
                 hs.MaHoSo AS "maHoSo",
-                hs.SBD AS "sbd",
-                ts.HoTen AS "hoTen",
-                ts.CCCD AS "cccd",
-                ts.KhuVuc AS "khuVuc",
-                hs.TrangThai AS "trangThai"
+                ts.SBD AS "sbd", 
+                ts.HoTen AS "hoTen", 
+                n.TenNganh AS "tenNganh", 
+                hs.TrangThai AS "trangThai", 
+                hs.NgayNop AS "ngayNop"
             FROM HoSoNhapHoc hs
             JOIN ThiSinh ts ON hs.SBD = ts.SBD
+            LEFT JOIN NguyenVong nv ON ts.SBD = nv.SBD AND nv.TrangThai = 1
+            LEFT JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
+            LEFT JOIN Nganh n ON ct.MaNganh = n.MaNganh
             WHERE hs.TrangThai = 1
-            ORDER BY hs.MaHoSo ASC;
+            ORDER BY hs.NgayNop DESC
         `;
         const result = await pool.query(query);
         res.status(200).json({
-            message: 'Lấy danh sách hồ sơ chờ duyệt thành công.',
+            message: 'Lấy danh sách hồ sơ thành công.',
             tongSo: result.rows.length,
             data: result.rows
         });
@@ -37,9 +42,12 @@ const getPendingApplications = async (req, res) => {
 // [GET] Lấy chi tiết hồ sơ và danh sách minh chứng
 const getApplicationDetails = async (req, res) => {
     const { id } = req.params; // id chính là MaHoSo truyền từ URL
+    
+    // CHỐT CHẶN AN TOÀN: Bắt lỗi Frontend truyền undefined
     if (!id || id === 'undefined' || isNaN(id)) {
         return res.status(400).json({ error: 'Mã hồ sơ không hợp lệ hoặc bị rỗng.' });
     }
+    
     try {
         // 1. Lấy thông tin chung của hồ sơ, thí sinh và ngành trúng tuyển
         const hsQuery = `
@@ -102,17 +110,57 @@ const reviewApplication = async (req, res) => {
     }
 
     try {
-        const checkQuery = 'SELECT TrangThai, SBD FROM HoSoNhapHoc WHERE MaHoSo = $1';
+        // Lấy thông tin email và tên thí sinh để gửi thư
+        const checkQuery = `
+            SELECT hs.TrangThai, ts.SBD, ts.HoTen, ts.Email 
+            FROM HoSoNhapHoc hs JOIN ThiSinh ts ON hs.SBD = ts.SBD 
+            WHERE hs.MaHoSo = $1
+        `;
         const checkResult = await pool.query(checkQuery, [id]);
 
         if (checkResult.rows.length === 0) return res.status(404).json({ message: 'Không tìm thấy hồ sơ.' });
         if (checkResult.rows[0].trangthai !== 1) return res.status(400).json({ message: 'Hồ sơ này đã được xử lý trước đó.' });
 
-        const updateQuery = `UPDATE HoSoNhapHoc SET TrangThai = $1 WHERE MaHoSo = $2 RETURNING MaHoSo, TrangThai;`;
-        const updateResult = await pool.query(updateQuery, [trangThai, id]);
+        const tsInfo = checkResult.rows[0];
+
+        // Cập nhật Database
+        const updateQuery = `UPDATE HoSoNhapHoc SET TrangThai = $1, GhiChu = $2 WHERE MaHoSo = $3 RETURNING MaHoSo, TrangThai;`;
+        const updateResult = await pool.query(updateQuery, [trangThai, lyDo || null, id]);
+
+        // === LOGIC GỬI EMAIL TỰ ĐỘNG NẾU LÀ YÊU CẦU BỔ SUNG ===
+        if (trangThai === 3 && tsInfo.email) {
+            // Cấu hình Email gửi đi (Bạn nên dùng Mật khẩu ứng dụng của Gmail)
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                    user: 'baog96005@gmail.com',
+                    pass: 'ejtgnmgpqacrdkic'
+                }
+            });
+
+            const mailOptions = {
+                from: '"Hội đồng Tuyển sinh PTIT" <no-reply@ptit.edu.vn>',
+                to: tsInfo.email,
+                subject: `[PTIT] Yêu cầu bổ sung hồ sơ nhập học - SBD: ${tsInfo.sbd}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                        <h3 style="color: #b71a22;">Chào ${tsInfo.hoten},</h3>
+                        <p>Hội đồng tuyển sinh đã kiểm tra hồ sơ minh chứng trực tuyến của bạn và nhận thấy có một số thông tin cần được cập nhật/bổ sung.</p>
+                        <p><strong>Lý do từ Cán bộ tuyển sinh:</strong></p>
+                        <div style="background-color: #fcf8f8; padding: 15px; border-left: 4px solid #b71a22; margin: 10px 0;">
+                            <i>${lyDo}</i>
+                        </div>
+                        <p>Hệ thống đã mở lại Cổng nộp hồ sơ cho bạn. Vui lòng đăng nhập vào <a href="http://localhost:5173/" style="color: #b71a22; font-weight: bold;">Cổng Tuyển Sinh</a> để tải lên lại các giấy tờ theo đúng yêu cầu trên.</p>
+                        <p>Trân trọng,<br>Hội đồng Tuyển sinh.</p>
+                    </div>
+                `
+            };
+
+            // Chạy ngầm việc gửi mail để không làm chậm thao tác của cán bộ
+            transporter.sendMail(mailOptions).catch(err => console.error("Lỗi gửi email:", err));
+        }
 
         const messageAlert = trangThai === 2 ? '✅ Đã PHÊ DUYỆT hồ sơ thành công.' : '❌ Đã TỪ CHỐI / Yêu cầu bổ sung hồ sơ.';
-
         res.status(200).json({
             message: messageAlert,
             data: { maHoSo: updateResult.rows[0].mahoso, trangThaiMoi: updateResult.rows[0].trangthai, lyDo: lyDo || null }
@@ -210,7 +258,6 @@ const processAdmissions = async (req, res) => {
                 quotas[id_chitieu]--; 
 
                 // CHỈ CẬP NHẬT ĐIỂM CHUẨN LÊN MỨC MỚI nếu slot cuối cùng của chỉ tiêu bị lấp đầy
-                // (Vì danh sách xếp từ cao xuống thấp, người lấp đầy slot cuối sẽ là người có điểm thấp nhất trong mức an toàn)
                 if (quotas[id_chitieu] === 0) {
                     finalCutoffs[id_chitieu] = diemTongNumber;
                 }
@@ -276,12 +323,8 @@ const getAdmittedStudents = async (req, res) => {
             JOIN thisinh ts ON nv.sbd = ts.sbd
             JOIN chitieutuyensinh ct ON nv.id_chitieu = ct.id
             JOIN nganh n ON ct.manganh = n.manganh
-            
-            -- SỬA TẠI ĐÂY: Chuyển LEFT JOIN thành JOIN cứng với bảng HoSoNhapHoc
             JOIN hosonhaphoc hs ON ts.sbd = hs.sbd 
             LEFT JOIN sinhvien sv ON hs.mahoso = sv.mahoso 
-            
-            -- LOGIC CỐT LÕI: Đậu xét tuyển (nv.trangthai = 1) VÀ Hồ sơ đã được duyệt (hs.trangthai = 2)
             WHERE nv.trangthai = 1 AND hs.trangthai = 2
             ORDER BY n.manganh ASC, ts.sbd ASC;
         `;
@@ -299,7 +342,6 @@ const generateStudentIds = async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // Thêm cột ts.HoTen vào truy vấn
         const pendingQuery = `
             SELECT hs.MaHoSo, ts.SBD, ts.HoTen, ct.MaNganh 
             FROM HoSoNhapHoc hs
@@ -311,7 +353,7 @@ const generateStudentIds = async (req, res) => {
         `;
         const pendingStudents = await client.query(pendingQuery);
 
-        let generatedDetails = []; // Mảng chứa kết quả trả về cho UI
+        let generatedDetails = []; 
 
         for (let student of pendingStudents.rows) {
             const yearPrefix = new Date().getFullYear().toString().slice(-2); 
@@ -328,7 +370,6 @@ const generateStudentIds = async (req, res) => {
 
             await client.query(`INSERT INTO SinhVien (MSSV, MaHoSo) VALUES ($1, $2)`, [newMSSV, student.mahoso]);
             
-            // Ghi nhận chi tiết từng sinh viên được cấp mã
             generatedDetails.push({
                 sbd: student.sbd,
                 hoTen: student.hoten,
@@ -340,7 +381,7 @@ const generateStudentIds = async (req, res) => {
         
         res.status(200).json({ 
             message: `Cấp mã MSSV thành công cho ${generatedDetails.length} sinh viên.`,
-            details: generatedDetails // Trả mảng chi tiết về
+            details: generatedDetails 
         });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -383,13 +424,11 @@ const getDashboardStats = async (req, res) => {
         const tongHoSoRes = await pool.query('SELECT COUNT(*) FROM HoSoNhapHoc');
         const tongHoSo = parseInt(tongHoSoRes.rows[0].count);
 
-        // Đếm số lượng trúng tuyển TRƯỚC (Dùng DISTINCT để đếm số người, không đếm số nguyện vọng)
         const trungTuyenRes = await pool.query('SELECT COUNT(DISTINCT SBD) FROM NguyenVong WHERE TrangThai = 1');
         const trungTuyen = parseInt(trungTuyenRes.rows[0].count);
 
-        // LOGIC CHUẨN: Chưa nộp = Tổng đậu - Đã nộp
         let chuaNop = trungTuyen - tongHoSo; 
-        if (chuaNop < 0) chuaNop = 0; // Đảm bảo không bị âm
+        if (chuaNop < 0) chuaNop = 0; 
 
         const trangThaiRes = await pool.query(`SELECT TrangThai, COUNT(*) as count FROM HoSoNhapHoc GROUP BY TrangThai`);
         let hoSoChoDuyet = 0;
@@ -425,7 +464,7 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
-// 2. [GET] Dành cho ADMIN: Thống kê phân tích BI (Chuyển sang hàm riêng)
+// 2. [GET] Dành cho ADMIN: Thống kê phân tích BI
 const getAdminDashboardStats = async (req, res) => {
     try {
         const activeDotRes = await pool.query('SELECT MaDot, TenDot FROM DotTuyenSinh WHERE IsActive = true LIMIT 1');
@@ -511,11 +550,10 @@ const getAdminDashboardStats = async (req, res) => {
 };
 
 // ========================================================
-// 3. BỔ SUNG: CÁC UC ĐỘC QUYỀN CHO ADMIN (UC 8, 9, 10)
+// 3. CÁC UC ĐỘC QUYỀN CHO ADMIN (UC 8, 9, 10)
 // ========================================================
 
 // --- UC08: QUẢN LÝ TÀI KHOẢN CÁN BỘ ---
-// Lấy danh sách tất cả Cán bộ (MaNhom = 2)
 const getAllOfficers = async (req, res) => {
     try {
         const result = await pool.query(
@@ -528,7 +566,6 @@ const getAllOfficers = async (req, res) => {
     }
 };
 
-// Admin tạo tài khoản Cán bộ mới
 const createOfficer = async (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) {
@@ -548,7 +585,6 @@ const createOfficer = async (req, res) => {
     }
 };
 
-// Admin đóng/mở khóa tài khoản Cán bộ (Toggle Lock)
 const toggleLockOfficer = async (req, res) => {
     const { id } = req.params;
     try {
@@ -564,11 +600,9 @@ const toggleLockOfficer = async (req, res) => {
 };
 
 // --- UC09: QUẢN LÝ DANH MỤC NGÀNH/KHOA ---
-// [POST] Thêm ngành mới
 const createNganhCatalog = async (req, res) => {
     const { maNganh, tenNganh, maKhoa } = req.body;
     try {
-        // Kiểm tra xem mã ngành đã tồn tại chưa
         const checkExist = await pool.query('SELECT MaNganh FROM Nganh WHERE MaNganh = $1', [maNganh.toUpperCase()]);
         if (checkExist.rows.length > 0) {
             return res.status(400).json({ error: 'Mã ngành này đã tồn tại trong hệ thống!' });
@@ -585,9 +619,8 @@ const createNganhCatalog = async (req, res) => {
     }
 };
 
-// [PUT] Cập nhật thông tin ngành
 const updateNganhCatalog = async (req, res) => {
-    const { id } = req.params; // Sử dụng id (Mã ngành) truyền từ URL
+    const { id } = req.params; 
     const { tenNganh, maKhoa } = req.body;
     try {
         await pool.query(
@@ -601,11 +634,9 @@ const updateNganhCatalog = async (req, res) => {
     }
 };
 
-// [DELETE] Xóa ngành
 const deleteNganhCatalog = async (req, res) => {
     const { id } = req.params;
     try {
-        // RÀNG BUỘC: Kiểm tra xem ngành này đã từng được thiết lập chỉ tiêu chưa
         const checkUsage = await pool.query('SELECT ID FROM ChiTieuTuyenSinh WHERE MaNganh = $1 LIMIT 1', [id]);
         if (checkUsage.rows.length > 0) {
             return res.status(400).json({ error: 'Không thể xóa! Ngành học này đang được sử dụng trong các Đợt Tuyển Sinh.' });
@@ -623,7 +654,6 @@ const deleteNganhCatalog = async (req, res) => {
 const createDotTuyenSinh = async (req, res) => {
     const { tenDot, namHoc } = req.body;
     try {
-        // Tự động tắt đợt cũ nếu mở đợt mới
         await pool.query(`UPDATE DotTuyenSinh SET IsActive = FALSE`);
         const result = await pool.query(
             `INSERT INTO DotTuyenSinh (TenDot, NamHoc, IsActive) VALUES ($1, $2, TRUE) RETURNING *`,
@@ -638,17 +668,14 @@ const createDotTuyenSinh = async (req, res) => {
 const addChiTieu = async (req, res) => {
     const { maDot, maNganh, soLuong } = req.body;
     try {
-        // Kiểm tra xem chỉ tiêu cho ngành này trong đợt này đã tồn tại chưa
         const checkQuery = 'SELECT ID FROM ChiTieuTuyenSinh WHERE MaDot = $1 AND MaNganh = $2';
         const checkResult = await pool.query(checkQuery, [maDot, maNganh]);
 
         if (checkResult.rows.length > 0) {
-            // Nếu ĐÃ TỒN TẠI -> Ghi đè (Cập nhật) số lượng mới
             const updateQuery = 'UPDATE ChiTieuTuyenSinh SET SoLuong = $1 WHERE MaDot = $2 AND MaNganh = $3 RETURNING *';
             const updateResult = await pool.query(updateQuery, [soLuong, maDot, maNganh]);
             res.status(200).json({ message: 'Đã cập nhật lại số lượng chỉ tiêu thành công.', data: updateResult.rows[0] });
         } else {
-            // Nếu CHƯA TỒN TẠI -> Thêm mới hoàn toàn
             const insertQuery = 'INSERT INTO ChiTieuTuyenSinh (MaDot, MaNganh, SoLuong) VALUES ($1, $2, $3) RETURNING *';
             const insertResult = await pool.query(insertQuery, [maDot, maNganh, soLuong]);
             res.status(201).json({ message: 'Phân bổ chỉ tiêu mới thành công.', data: insertResult.rows[0] });
@@ -659,10 +686,9 @@ const addChiTieu = async (req, res) => {
     }
 };
 const resetOfficerPassword = async (req, res) => {
-    const { id } = req.params; // ID của cán bộ cần reset
+    const { id } = req.params; 
 
     try {
-        // Băm mật khẩu cố định '123456'
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash('123456', saltRounds);
 
@@ -680,10 +706,8 @@ const resetOfficerPassword = async (req, res) => {
     }
 };
 
-// [GET] Lấy danh sách lịch sử Đợt tuyển sinh
 const getAllDots = async (req, res) => {
     try {
-        // Sửa ID thành MaDot
         const query = `
             SELECT MaDot as "id", TenDot as "tenDot", NamHoc as "namHoc", IsActive as "isActive" 
             FROM DotTuyenSinh ORDER BY MaDot DESC
@@ -696,7 +720,6 @@ const getAllDots = async (req, res) => {
     }
 };
 
-// [GET] Lấy danh sách tất cả các ngành trong hệ thống để làm dropdown
 const getAllNganh = async (req, res) => {
     try {
         const query = 'SELECT MaNganh AS "maNganh", TenNganh AS "tenNganh", MaKhoa AS "maKhoa" FROM Nganh ORDER BY TenNganh ASC';
@@ -715,7 +738,7 @@ const importCandidates = async (req, res) => {
 
     const client = await pool.connect();
     try {
-        await client.query('BEGIN'); // Bắt đầu Transaction
+        await client.query('BEGIN'); 
 
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -724,7 +747,6 @@ const importCandidates = async (req, res) => {
         const importedDetails = [];
 
         for (const row of rawData) {
-            // --- 1. ĐỌC THÔNG TIN CÁ NHÂN ---
             const sbd = row['SBD'] || row['Số báo danh'];
             const cccd = row['CCCD'] || row['Số CCCD'] || row['CMND'];
             const hoTen = row['HoTen'] || row['Họ tên'] || row['Họ và tên'];
@@ -736,7 +758,6 @@ const importCandidates = async (req, res) => {
 
             if (!sbd || !cccd || !hoTen || !email) continue;
 
-            // Upsert vào bảng ThiSinh
             const insertThiSinhQuery = `
                 INSERT INTO ThiSinh (SBD, CCCD, HoTen, NgaySinh, GioiTinh, Email, SDT, KhuVuc)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -748,7 +769,6 @@ const importCandidates = async (req, res) => {
             const tsResult = await client.query(insertThiSinhQuery, [sbd, cccd, hoTen, ngaySinh, gioiTinh, email, sdt, khuVuc]);
             const savedSBD = tsResult.rows[0].sbd;
 
-            // --- 2. ĐỌC VÀ LƯU ĐIỂM SỐ (Bảng ChiTietDiem) ---
             const scoreColumns = Object.keys(row).filter(key => key.toUpperCase().startsWith('DIEM_'));
             
             for (const col of scoreColumns) {
@@ -761,24 +781,20 @@ const importCandidates = async (req, res) => {
                 }
             }
 
-            // --- 3. ĐỌC VÀ LƯU NGUYỆN VỌNG (Bảng NguyenVong) ---
             const maNganh = row['MaNganh'] || row['Mã ngành'];
             const diemTong = parseFloat(row['DiemTong'] || row['Điểm tổng']);
 
             if (maNganh && !isNaN(diemTong)) {
-                // 3.1 TÌM ĐỢT ĐANG MỞ
                 const activeDotRes = await client.query('SELECT MaDot FROM DotTuyenSinh WHERE IsActive = true LIMIT 1');
                 
                 if (activeDotRes.rows.length > 0) {
                     const activeDotId = activeDotRes.rows[0].madot;
 
-                    // 3.2 TÌM ID CHỈ TIÊU tương ứng với Mã Ngành trong Đợt đang mở
                     const checkChiTieu = await client.query(
                         'SELECT ID FROM ChiTieuTuyenSinh WHERE MaDot = $1 AND MaNganh = $2', 
                         [activeDotId, maNganh.toUpperCase()]
                     );
 
-                    // 3.3 NẾU CÓ CHỈ TIÊU -> NẠP NGUYỆN VỌNG VÀO DATABASE
                     if (checkChiTieu.rows.length > 0) {
                         const idChiTieu = checkChiTieu.rows[0].id;
                         
@@ -819,7 +835,6 @@ const importCandidates = async (req, res) => {
     }
 };
 
-// [GET] Lấy danh sách Khoa để đổ ra Dropdown
 const getAllKhoa = async (req, res) => {
     try {
         const result = await pool.query('SELECT MaKhoa AS "maKhoa", TenKhoa AS "tenKhoa" FROM Khoa ORDER BY TenKhoa ASC');
@@ -829,7 +844,6 @@ const getAllKhoa = async (req, res) => {
     }
 };
 
-// [POST] Thêm Khoa mới (UC09 phụ)
 const createKhoa = async (req, res) => {
     const { maKhoa, tenKhoa } = req.body;
     try {
@@ -840,9 +854,8 @@ const createKhoa = async (req, res) => {
     }
 };
 
-// [PUT] Cập nhật thông tin Khoa
 const updateKhoa = async (req, res) => {
-    const { id } = req.params; // Mã khoa cần sửa truyền trên URL
+    const { id } = req.params; 
     const { tenKhoa } = req.body;
     try {
         await pool.query(
@@ -856,11 +869,9 @@ const updateKhoa = async (req, res) => {
     }
 };
 
-// [DELETE] Xóa Khoa khỏi hệ thống
 const deleteKhoa = async (req, res) => {
     const { id } = req.params;
     try {
-        // RÀNG BUỘC NGHIỆP VỤ BẮT BUỘC (BR_Khoa_02): Kiểm tra xem có ngành nào đang thuộc khoa này không
         const checkUsage = await pool.query('SELECT MaNganh FROM Nganh WHERE MaKhoa = $1 LIMIT 1', [id]);
         if (checkUsage.rows.length > 0) {
             return res.status(400).json({ 
