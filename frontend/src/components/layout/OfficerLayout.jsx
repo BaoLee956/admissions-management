@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -7,7 +7,7 @@ import {
   LogOut,
   User as UserIcon,
   GraduationCap,
-  FileText // BỔ SUNG: Import thêm icon cho Quản lý Hồ sơ
+  FileText 
 } from 'lucide-react';
 
 const OfficerLayout = () => {
@@ -17,14 +17,45 @@ const OfficerLayout = () => {
   const userString = localStorage.getItem('user');
   const user = userString ? JSON.parse(userString) : { fullName: 'Cán bộ Tuyển sinh' };
 
-  const handleLogout = () => {
+  // Dùng useCallback để tránh render lại hàm nhiều lần
+  const handleLogout = useCallback(() => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
     localStorage.removeItem('user');
     navigate('/officer/login');
-  };
+  }, [navigate]);
 
-  // BỔ SUNG: Thêm phần tử "Quản lý Hồ sơ" vào mảng danh mục menu
+  // BỔ SUNG: Tính năng tự động Logout khi AFK
+  useEffect(() => {
+    let timeoutId;
+    // Thời gian giới hạn AFK: 15 phút (15 * 60 * 1000 ms). Bạn có thể chỉnh lại số 15.
+    const AFK_TIME_LIMIT = 15 * 60 * 1000; 
+
+    // Hàm reset lại thời gian đếm ngược mỗi khi có thao tác
+    const resetAfkTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        alert("Phiên làm việc đã hết hạn do bạn không thao tác trong thời gian dài. Vui lòng đăng nhập lại.");
+        handleLogout();
+      }, AFK_TIME_LIMIT);
+    };
+
+    // Danh sách các sự kiện chứng tỏ cán bộ đang có mặt trên màn hình
+    const activeEvents = ['mousemove', 'mousedown', 'keypress', 'scroll', 'touchstart'];
+
+    // Lắng nghe các sự kiện
+    activeEvents.forEach(event => window.addEventListener(event, resetAfkTimer));
+
+    // Kích hoạt bộ đếm ngay khi vừa vào trang
+    resetAfkTimer();
+
+    // Dọn dẹp sự kiện khi component bị unmount (chuyển sang trang khác ngoài layout)
+    return () => {
+      clearTimeout(timeoutId);
+      activeEvents.forEach(event => window.removeEventListener(event, resetAfkTimer));
+    };
+  }, [handleLogout]);
+
   const menuItems = [
     {
       path: '/officer/dashboard',
@@ -52,7 +83,6 @@ const OfficerLayout = () => {
     <div className="flex h-screen bg-gray-50 overflow-hidden text-gray-900">
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm relative z-10">
-        {/* Logo/Brand */}
         <div className="h-16 flex items-center px-6 border-b border-gray-100">
           <div className="flex items-center gap-2 text-[#b71a22]">
             <GraduationCap size={28} />
@@ -60,7 +90,6 @@ const OfficerLayout = () => {
           </div>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-1.5">
           <p className="px-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">
             Quản lý tuyển sinh
@@ -84,7 +113,6 @@ const OfficerLayout = () => {
           ))}
         </nav>
 
-        {/* User Info & Logout */}
         <div className="p-4 border-t border-gray-100 bg-gray-50/50">
           <div className="flex items-center gap-3 px-2 mb-4">
             <div className="w-10 h-10 rounded-full bg-red-100 text-[#b71a22] flex items-center justify-center shrink-0">

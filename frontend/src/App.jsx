@@ -1,13 +1,23 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+// --- Imports Thí sinh & Auth ---
 import CandidatePortal from './pages/candidate/CandidatePortal';
 import OfficerLogin from './pages/officer/OfficerLogin';
-import OfficerDashboard from './pages/officer/OfficerDashboard';
 import ProtectedRoute from './components/common/ProtectedRoute';
+
+// --- Imports Layouts ---
 import OfficerLayout from './components/layout/OfficerLayout';
+import AdminLayout from './components/layout/AdminLayout';
+
+// --- Imports Pages Cán bộ ---
+import OfficerDashboard from './pages/officer/OfficerDashboard';
 import OfficerAdmissions from './pages/officer/OfficerAdmissions';
 import OfficerOnboarding from './pages/officer/OfficerOnboarding';
 import OfficerApplications from './pages/officer/OfficerApplications';
+
+// --- Imports Pages Admin ---
+import AdminOfficers from './pages/admin/AdminOfficers';
 
 function App() {
   return (
@@ -20,22 +30,30 @@ function App() {
         <Route path="/officer/login" element={<OfficerLogin />} />
         
         {/* --- CÁC ROUTE BẢO MẬT DÀNH CHO CÁN BỘ / ADMIN --- */}
-        {/* 1. Bọc bằng ProtectedRoute để chặn người dùng chưa đăng nhập */}
         <Route element={<ProtectedRoute />}>
-          {/* 2. Bọc bằng OfficerLayout để dùng chung bộ khung UI (Sidebar + Header) */}
+          
+          {/* 1. CỤM ROUTE CHO CÁN BỘ */}
           <Route element={<OfficerLayout />}>
-            {/* 3. Tự động chuyển hướng từ /officer sang /officer/dashboard */}
             <Route path="/officer" element={<Navigate to="/officer/dashboard" replace />} />
-            
-            {/* Các trang chức năng bên trong Layout */}
             <Route path="/officer/dashboard" element={<OfficerDashboard />} />
             <Route path="/officer/admissions" element={<OfficerAdmissions />} />
             <Route path="/officer/onboarding" element={<OfficerOnboarding />} />
             <Route path="/officer/applications" element={<OfficerApplications />} />
           </Route>
+
+          {/* 2. CỤM ROUTE CHO ADMIN */}
+          <Route path="/admin" element={<AdminLayout />}>
+            {/* Nếu vào /admin thì tự động đẩy sang dashboard */}
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<OfficerDashboard />} />
+            <Route path="officers" element={<AdminOfficers />} />
+            <Route path="admissions-setup" element={<div>Trang thiết lập chỉ tiêu đang xây dựng...</div>} />
+            <Route path="categories" element={<div>Trang danh mục đang xây dựng...</div>} />
+          </Route>
+
         </Route>
 
-        {/* Route dự phòng */}
+        {/* Route dự phòng - Nhập sai link thì về trang chủ */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

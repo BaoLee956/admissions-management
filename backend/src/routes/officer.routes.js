@@ -32,5 +32,6 @@ router.post('/admissions/process', adminController.processAdmissions);
 // ==========================================
 router.get('/onboarding/students', adminController.getAdmittedStudents);
 router.post('/onboarding/generate-mssv', adminController.generateStudentIds);
+router.get('/dashboard/stats', adminController.getDashboardStats);
 
 module.exports = router;

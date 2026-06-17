@@ -29,10 +29,15 @@ const OfficerLogin = () => {
       localStorage.setItem('role', user?.role || 'OFFICER'); // Fallback if role is not returned explicitly
       localStorage.setItem('user', JSON.stringify(user));
 
-      // Navigate to dashboard on success
-      navigate('/officer/dashboard');
+      apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      if (user.role === 'ADMIN') {
+        // Nếu là Admin, đẩy sang cổng quản trị cấp cao
+        navigate('/admin/dashboard');
+      } else {
+        // Nếu là Cán bộ bình thường, đẩy sang cổng nghiệp vụ tuyển sinh
+        navigate('/officer/dashboard');
+      }
     } catch (err) {
-      // Handle error responses gracefully
       setError(
         err.response?.data?.message || 
         'Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại.'
