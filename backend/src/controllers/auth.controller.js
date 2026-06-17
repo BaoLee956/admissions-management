@@ -38,7 +38,7 @@ const requestCandidateOTP = async (req, res) => {
             </div>
         `;
         
-        const mailSent = await sendMail(candidate.email, 'Mã xác thực đăng nhập (OTP)', htmlContent);
+        const mailSent = sendMail(candidate.email, 'Mã xác thực đăng nhập (OTP)', htmlContent);
 
         if (!mailSent) {
             return res.status(500).json({ message: 'Không thể gửi email OTP lúc này. Vui lòng thử lại sau.' });

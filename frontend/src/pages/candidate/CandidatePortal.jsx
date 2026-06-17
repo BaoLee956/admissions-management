@@ -21,18 +21,8 @@ const CandidatePortal = () => {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [admissionResult, setAdmissionResult] = useState(null);
   
-  // Data states
-  const [formData, setFormData] = useState({
-    sbd: '',
-    cccd: '',
-    otp: ''
-  });
-  
-  const [files, setFiles] = useState({
-    cccd: null,
-    hocBa: null,
-    giayBao: null
-  });
+  const [formData, setFormData] = useState({ sbd: '', cccd: '', otp: '' });
+  const [files, setFiles] = useState({ cccd: null, hocBa: null, giayBao: null });
 
   // --- Handlers ---
   const handleInputChange = (e) => {
@@ -46,10 +36,7 @@ const CandidatePortal = () => {
     setIsLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      await apiClient.post('/auth/candidates/otp', { 
-        sbd: formData.sbd, 
-        cccd: formData.cccd 
-      });
+      await apiClient.post('/auth/candidates/otp', { sbd: formData.sbd, cccd: formData.cccd });
       setStep(2);
       setCountdown(59);
       setMessage({ type: 'success', text: 'Mã OTP đã được gửi về email của bạn.' });
@@ -66,15 +53,13 @@ const CandidatePortal = () => {
       const res = await apiClient.get('/candidates/me/admission-result');
       const data = res.data.data || res.data;
       setAdmissionResult(data);
-      if (data.daXacNhanNhapHoc) {
-        setStep(4);
-      } else {
-        setStep(3);
-      }
+      
+      // FIX LUỒNG: Luôn luôn chuyển sang Step 3 (Xem điểm), không nhảy cóc sang Step 4 nữa
+      setStep(3);
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Không thể tải kết quả xét tuyển.';
       setMessage({ type: 'error', text: errorMsg });
-      setStep(1); // Go back if fetch fails
+      setStep(1); 
     }
   };
 
@@ -84,18 +69,14 @@ const CandidatePortal = () => {
     setMessage({ type: '', text: '' });
     try {
       const res = await apiClient.post('/auth/candidates/verify', { 
-        sbd: formData.sbd, 
-        cccd: formData.cccd, 
-        otp: formData.otp 
+        sbd: formData.sbd, cccd: formData.cccd, otp: formData.otp 
       });
       
       const token = res.data.token || res.data.data?.token;
       if (token) {
         localStorage.setItem('candidateToken', token);
-        // Tự động gắn token vào header cho các request tiếp theo (nếu chưa cấu hình interceptor)
         apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       }
-      
       await fetchAdmissionResult();
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Mã OTP không hợp lệ hoặc đã hết hạn.';
@@ -110,8 +91,9 @@ const CandidatePortal = () => {
     setMessage({ type: '', text: '' });
     try {
       await apiClient.put('/candidates/me/confirm-enrollment', { daXacNhanNhapHoc: true });
+      // Cập nhật lại state ảo để UI hiện nút Tiếp tục thay vì gọi lại API
+      setAdmissionResult(prev => ({ ...prev, daXacNhanNhapHoc: true }));
       setStep(4);
-      setMessage({ type: 'success', text: 'Xác nhận nhập học thành công! Vui lòng hoàn thiện hồ sơ.' });
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Có lỗi xảy ra khi xác nhận nhập học.';
       setMessage({ type: 'error', text: errorMsg });
@@ -123,52 +105,58 @@ const CandidatePortal = () => {
   const handleFileDrop = (e, type) => {
     e.preventDefault();
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      setFiles(prev => ({ ...prev, [type]: droppedFile }));
-    }
+    if (droppedFile) setFiles(prev => ({ ...prev, [type]: droppedFile }));
   };
 
   const handleFileSelect = (e, type) => {
     const selectedFile = e.target.files[0];
-    if (selectedFile) {
-      setFiles(prev => ({ ...prev, [type]: selectedFile }));
-    }
+    if (selectedFile) setFiles(prev => ({ ...prev, [type]: selectedFile }));
   };
 
   const handleSubmitDocuments = async () => {
     setIsLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      // 1. Upload files
-      const uploadPromises = Object.entries(files).map(async ([key, file]) => {
-        if (!file) return null;
+      const mapLoaiGiayTo = { 'cccd': 'CCCD', 'hocBa': 'HOC_BA', 'giayBao': 'GIAY_BAO' };
+
+      for (const [key, file] of Object.entries(files)) {
+        if (!file) continue;
         const fmData = new FormData();
-        fmData.append('maLoai', key);
+        fmData.append('maLoai', mapLoaiGiayTo[key]); 
         fmData.append('file', file);
-        return apiClient.post('/candidates/me/documents', fmData, {
+        
+        const res = await apiClient.post('/candidates/me/documents', fmData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
-      });
+        
+        if (res.data && res.data.error) throw new Error(res.data.error.message);
+        if (res.status >= 400) throw new Error(res.data?.message || `Lỗi tải lên giấy tờ: ${key}`);
+      }
 
-      await Promise.all(uploadPromises);
-
-      // 2. Submit application
       await apiClient.post('/candidates/me/submit-application');
       
-      setMessage({ type: 'success', text: 'Nộp hồ sơ minh chứng thành công! Cảm ơn bạn.' });
+      alert("Hồ sơ của bạn đã được gửi thành công!");
       
-      // Reset form sau khi gửi
+      // FIX ROLLBACK: Trả thí sinh về trang chủ, dọn dẹp dữ liệu
+      setStep(1);
+      setFormData({ sbd: '', cccd: '', otp: '' });
       setFiles({ cccd: null, hocBa: null, giayBao: null });
-      alert("Chốt gửi hồ sơ thành công!");
+      setAdmissionResult(null);
+      localStorage.removeItem('candidateToken');
+      delete apiClient.defaults.headers.common['Authorization']; // Xóa token khỏi Axios
+      
+      // Hiện thông báo ở màn hình chờ (Step 1)
+      setMessage({ type: 'success', text: 'Tuyệt vời! Hệ thống đã ghi nhận hồ sơ minh chứng của bạn. Vui lòng theo dõi email.' });
+      
     } catch (error) {
-      const errorMsg = error.response?.data?.error?.message || 'Quá trình tải lên hồ sơ thất bại. Vui lòng thử lại.';
+      console.error("Lỗi chi tiết khi upload:", error);
+      const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message || 'Quá trình tải lên hồ sơ thất bại. Vui lòng thử lại.';
       setMessage({ type: 'error', text: errorMsg });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Countdown timer for OTP
   useEffect(() => {
     let timer;
     if (step === 2 && countdown > 0) {
@@ -178,7 +166,6 @@ const CandidatePortal = () => {
   }, [step, countdown]);
 
   // --- Renders ---
-  
   const renderMessage = () => {
     if (!message.text) return null;
     const isError = message.type === 'error';
@@ -193,17 +180,11 @@ const CandidatePortal = () => {
   const renderStep1 = () => (
     <div className="animate-in fade-in zoom-in duration-500">
       <div className="text-center mb-8">
-        <img 
-          src="/ptit-logo.png" 
-          alt="PTIT Logo" 
-          className="h-20 w-auto object-contain mx-auto mb-4" 
-        />
+        <img src="/ptit-logo.png" alt="PTIT Logo" className="h-20 w-auto object-contain mx-auto mb-4" />
         <h1 className="text-3xl font-bold text-gray-800 mb-2">Cổng Tuyển Sinh PTIT</h1>
         <p className="text-gray-500">Vui lòng nhập thông tin để tra cứu kết quả</p>
       </div>
-
       {renderMessage()}
-
       <form onSubmit={handleRequestOTP} className="space-y-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Số Báo Danh</label>
@@ -253,9 +234,7 @@ const CandidatePortal = () => {
       <div className="text-center mb-6">
         <h2 className="text-2xl font-bold text-gray-800 mb-3">Xác Thực OTP</h2>
       </div>
-
       {renderMessage()}
-
       <form onSubmit={handleVerifyOTP} className="space-y-8 mt-2">
         <div>
           <input 
@@ -279,7 +258,6 @@ const CandidatePortal = () => {
             )}
           </div>
         </div>
-        
         <div className="space-y-4">
           <button 
             type="submit"
@@ -288,7 +266,6 @@ const CandidatePortal = () => {
           >
             {isLoading ? <Loader2 className="animate-spin" size={20} /> : 'Xác nhận OTP'}
           </button>
-          
           <button 
             type="button"
             onClick={() => { setStep(1); setMessage({type:'', text:''}); }}
@@ -312,15 +289,34 @@ const CandidatePortal = () => {
       );
     }
 
-    const isPassed = admissionResult.trangThai === 'TRUNG_TUYEN';
-    // Fallbacks if data is missing
+    const status = admissionResult.trangThai;
+    const isPending = status === 0 || status === 'CHO_XET'; 
+    const isPassed = status === 1 || status === 'TRUNG_TUYEN';
+    
+    if (isPending) {
+      return (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 text-center py-10 px-4">
+          <div className="w-20 h-20 bg-yellow-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle size={40} className="text-yellow-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-3">Hồ sơ đang được xử lý</h2>
+          <p className="text-gray-500 mb-8 leading-relaxed">
+            Hệ thống chưa công bố kết quả xét tuyển hoặc đang trong quá trình tính toán điểm chuẩn. Vui lòng quay lại tra cứu sau!
+          </p>
+          <button 
+            onClick={() => { setStep(1); setAdmissionResult(null); }}
+            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3.5 px-4 rounded-xl transition-colors flex items-center justify-center"
+          >
+            <ChevronLeft size={18} className="mr-2" /> Quay lại trang chủ
+          </button>
+        </div>
+      );
+    }
+
     const hoTen = admissionResult.hoTen || 'Thí sinh';
     const nganhTrungTuyen = admissionResult.nganhTrungTuyen || 'Chưa có thông tin';
     const diemChuan = admissionResult.diemChuan || '---';
     const diemCuaBan = admissionResult.diemCuaBan || '---';
-    const diemToan = admissionResult.diemToan || '---';
-    const diemLy = admissionResult.diemLy || '---';
-    const diemHoa = admissionResult.diemHoa || '---';
     const diemUuTien = admissionResult.diemUuTien || '0.00';
 
     return (
@@ -415,18 +411,27 @@ const CandidatePortal = () => {
               </div>
 
               {isPassed && (
-                <button 
-                  onClick={handleConfirmAdmission}
-                  disabled={isLoading}
-                  className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-4 px-4 rounded-xl shadow-[0_4px_14px_0_rgba(22,163,74,0.39)] hover:shadow-[0_6px_20px_rgba(22,163,74,0.23)] hover:-translate-y-0.5 transition-all duration-300 animate-pulse relative overflow-hidden group disabled:opacity-70 disabled:animate-none flex justify-center"
-                >
-                  {isLoading ? <Loader2 className="animate-spin z-10" size={24} /> : (
-                    <>
-                      <span className="relative z-10">XÁC NHẬN NHẬP HỌC</span>
-                      <div className="absolute inset-0 h-full w-full bg-white/20 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-500"></div>
-                    </>
-                  )}
-                </button>
+                admissionResult.daXacNhanNhapHoc ? (
+                  <button 
+                    onClick={() => setStep(4)}
+                    className="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-4 px-4 rounded-xl shadow-md transition-all duration-300 flex justify-center"
+                  >
+                    TIẾP TỤC HOÀN THIỆN HỒ SƠ
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleConfirmAdmission}
+                    disabled={isLoading}
+                    className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-4 px-4 rounded-xl shadow-[0_4px_14px_0_rgba(22,163,74,0.39)] hover:shadow-[0_6px_20px_rgba(22,163,74,0.23)] hover:-translate-y-0.5 transition-all duration-300 animate-pulse relative overflow-hidden group disabled:opacity-70 disabled:animate-none flex justify-center"
+                  >
+                    {isLoading ? <Loader2 className="animate-spin z-10" size={24} /> : (
+                      <>
+                        <span className="relative z-10">XÁC NHẬN NHẬP HỌC</span>
+                        <div className="absolute inset-0 h-full w-full bg-white/20 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-500"></div>
+                      </>
+                    )}
+                  </button>
+                )
               )}
             </div>
           )}
@@ -437,7 +442,6 @@ const CandidatePortal = () => {
 
   const renderDropzone = (id, label, fileKey) => {
     const isUploaded = !!files[fileKey];
-    
     return (
       <div className="mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
@@ -482,12 +486,17 @@ const CandidatePortal = () => {
         <div className="text-center mb-6">
           <h2 className="text-2xl font-bold text-gray-800 mb-2">Hoàn thiện hồ sơ minh chứng</h2>
           <p className="text-sm text-gray-500">Vui lòng tải lên các giấy tờ cần thiết để hoàn tất</p>
+          <button
+            onClick={() => setStep(3)}
+            className="mt-3 text-xs text-red-600 hover:underline font-semibold inline-flex items-center gap-1 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 hover:bg-red-100/50 transition-colors"
+          >
+            <ChevronLeft size={14} /> Xem lại kết quả trúng tuyển
+          </button>
         </div>
         
         {renderMessage()}
 
-        {/* Progress bar */}
-        <div className="mb-8 mt-2">
+        <div className="mb-8 mt-4">
           <div className="flex justify-between text-xs font-medium text-gray-600 mb-2">
             <span>Tiến độ hoàn thành</span>
             <span className="text-red-600">{uploadedCount}/3 file</span>
@@ -522,15 +531,9 @@ const CandidatePortal = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-between font-sans selection:bg-red-200 relative overflow-hidden">
-      {/* Background decoration */}
       <div className="absolute top-0 left-0 w-full h-64 bg-red-700 rounded-b-[3rem] shadow-lg z-0"></div>
-      
-      {/* Main Content Area */}
       <div className="flex-grow flex flex-col justify-center items-center py-12 px-4 sm:px-6 lg:px-8 z-10">
-        {/* Main Card */}
         <div className="relative w-full max-w-md bg-white rounded-3xl shadow-[0_20px_50px_rgba(220,_38,_38,_0.07)] p-8 sm:p-10 border border-gray-100 mb-4">
-          
-          {/* Header Actions (Logout/Reset) */}
           {step > 1 && (
             <button 
               onClick={() => {
@@ -550,7 +553,6 @@ const CandidatePortal = () => {
             </button>
           )}
 
-          {/* Step Indicator (dots) */}
           <div className="flex justify-center space-x-2 mb-8">
             {[1, 2, 3, 4].map(idx => (
               <div 
@@ -563,7 +565,6 @@ const CandidatePortal = () => {
             ))}
           </div>
 
-          {/* Content based on step */}
           <div className="min-h-[400px] flex flex-col justify-center">
             {step === 1 && renderStep1()}
             {step === 2 && renderStep2()}
@@ -572,8 +573,6 @@ const CandidatePortal = () => {
           </div>
         </div>
       </div>
-      
-      {/* Footer Text */}
       <footer className="w-full bg-white border-t border-gray-200 py-4 text-center mt-auto z-10 relative">
         <div className="text-sm text-gray-500">
           <p>© 2026 Học viện Công nghệ Bưu chính Viễn thông.</p>

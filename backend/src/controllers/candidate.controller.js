@@ -1,25 +1,25 @@
 const { pool } = require('../config/database');
 const cloudinary = require('../config/cloudinary');
+
 // [GET] Lấy kết quả xét tuyển của thí sinh đang đăng nhập
 const getAdmissionResult = async (req, res) => {
-    // SBD này được lấy ra từ JWT Token đã giải mã ở Middleware, bảo mật tuyệt đối
     const sbd = req.user.sbd; 
 
     try {
-        // Query kết hợp nhiều bảng: ThiSinh, NguyenVong, Nganh, ChiTieuTuyenSinh
+        // Query nâng cấp: Lấy thêm KhuVuc và DiemChuan từ cấu hình chỉ tiêu
         const query = `
             SELECT 
                 ts.HoTen AS "hoTen",
+                ts.KhuVuc AS "khuVuc",
                 n.TenNganh AS "nganhTrungTuyen",
                 nv.DiemTong AS "diemCuaBan",
-                cx.DiemSan AS "diemChuan",
+                ct.DiemChuan AS "diemChuan",
                 nv.TrangThai AS "trangThaiKetQua",
                 hs.TrangThai AS "trangThaiHoSo"
             FROM ThiSinh ts
             LEFT JOIN NguyenVong nv ON ts.SBD = nv.SBD
             LEFT JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
             LEFT JOIN Nganh n ON ct.MaNganh = n.MaNganh
-            LEFT JOIN CauTrucXetTuyen cx ON cx.MaNganh = n.MaNganh AND cx.MaToHop = nv.MaToHop
             LEFT JOIN HoSoNhapHoc hs ON ts.SBD = hs.SBD
             WHERE ts.SBD = $1 
             ORDER BY nv.ThuTuUuTien ASC
@@ -34,7 +34,13 @@ const getAdmissionResult = async (req, res) => {
 
         const data = result.rows[0];
 
-        // Thêm câu truy vấn lấy điểm chi tiết
+        // Logic quy đổi điểm ưu tiên khu vực
+        const getDiemUuTien = (kv) => {
+            if (kv === 'KV1') return 0.75;
+            if (kv === 'KV2') return 0.25;
+            return 0.00;
+        };
+
         const chiTietQuery = `
             SELECT m.TenMon AS "mon", c.Diem AS "diem" 
             FROM ChiTietDiem c 
@@ -43,15 +49,15 @@ const getAdmissionResult = async (req, res) => {
         `;
         const resultDiem = await pool.query(chiTietQuery, [sbd]);
 
-        // Format lại dữ liệu trả về cho Frontend
         res.status(200).json({
             data: {
                 hoTen: data.hoTen,
                 nganhTrungTuyen: data.nganhTrungTuyen || 'Chưa có kết quả',
-                diemChuan: data.diemChuan,
+                diemChuan: data.diemChuan || '---',
                 diemCuaBan: data.diemCuaBan,
+                diemUuTien: getDiemUuTien(data.khuVuc),
                 trangThai: data.trangThaiKetQua === 1 ? 'TRUNG_TUYEN' : 'KHONG_TRUNG_TUYEN',
-                daXacNhanNhapHoc: data.trangThaiHoSo !== null, // Nếu đã có record trong bảng HoSoNhapHoc nghĩa là đã xác nhận
+                daXacNhanNhapHoc: data.trangThaiHoSo !== null, 
                 diemChiTiet: resultDiem.rows
             }
         });
@@ -61,11 +67,12 @@ const getAdmissionResult = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
 };
+
+// [PUT] Xác nhận nhập học
 const confirmEnrollment = async (req, res) => {
-    const sbd = req.user.sbd; // Lấy SBD từ Token
+    const sbd = req.user.sbd; 
     const { daXacNhanNhapHoc } = req.body;
 
-    // Kiểm tra payload gửi lên
     if (daXacNhanNhapHoc !== true) {
         return res.status(400).json({ 
             error: { code: 'INVALID_ACTION', message: 'Vui lòng xác nhận đồng ý nhập học.' } 
@@ -73,14 +80,10 @@ const confirmEnrollment = async (req, res) => {
     }
 
     try {
-        // Theo nguyên tắc, hệ thống sẽ kiểm tra thí sinh có Trúng tuyển không ở đây.
-        // Tuy nhiên, do chúng ta đang dùng dữ liệu mẫu (chưa có điểm chuẩn), 
-        // ta sẽ tiến hành khởi tạo trực tiếp Hồ sơ nhập học nháp cho thí sinh.
-
         const insertQuery = `
             INSERT INTO HoSoNhapHoc (SBD, TrangThai) 
             VALUES ($1, 0) 
-            ON CONFLICT (SBD) DO NOTHING -- Tránh lỗi nếu thí sinh bấm xác nhận 2 lần
+            ON CONFLICT (SBD) DO NOTHING 
             RETURNING MaHoSo;
         `;
         
@@ -95,6 +98,8 @@ const confirmEnrollment = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
 };
+
+// [POST] Tải lên tài liệu minh chứng từng file
 const uploadDocument = async (req, res) => {
     const sbd = req.user.sbd;
     const { maLoai } = req.body;
@@ -108,8 +113,8 @@ const uploadDocument = async (req, res) => {
     }
 
     try {
-        // 1. Lấy MaHoSo của thí sinh (Chỉ những ai đã Xác nhận nhập học mới có)
-        const hoSoQuery = 'SELECT MaHoSo FROM HoSoNhapHoc WHERE SBD = $1';
+        // SỬA LỖI TẠI ĐÂY: Lấy thêm cột TrangThai của hồ sơ lên để kiểm tra chốt chặn
+        const hoSoQuery = 'SELECT MaHoSo, TrangThai FROM HoSoNhapHoc WHERE SBD = $1';
         const hoSoResult = await pool.query(hoSoQuery, [sbd]);
 
         if (hoSoResult.rows.length === 0) {
@@ -117,18 +122,31 @@ const uploadDocument = async (req, res) => {
                 error: { code: 'NOT_CONFIRMED', message: 'Bạn chưa xác nhận nhập học hoặc chưa có hồ sơ trên hệ thống.' } 
             });
         }
-        const maHoSo = hoSoResult.rows[0].mahoso;
+        
+        const hoSo = hoSoResult.rows[0];
 
-        // 2. Mã hóa file từ RAM và đẩy lên Cloudinary
+        // CHỐT CHẶN CỰC KỲ QUAN TRỌNG: Nếu trạng thái hồ sơ khác 0 (tức là đã nộp/đang duyệt), cấm upload!
+        if (hoSo.trangthai !== 0) {
+            return res.status(400).json({ 
+                error: { 
+                    code: 'APPLICATION_SUBMITTED', 
+                    message: 'Hồ sơ của bạn đã được chốt nộp hoặc đang trong quá trình phê duyệt, không thể tải lên thêm giấy tờ mới.' 
+                } 
+            });
+        }
+
+        const maHoSo = hoSo.mahoso;
+
+        // Mã hóa file từ RAM và đẩy lên Cloudinary
         const b64 = Buffer.from(req.file.buffer).toString("base64");
         const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
         
         const cloudRes = await cloudinary.uploader.upload(dataURI, {
-            folder: `HoSoTuyenSinh/${sbd}`, // Tạo thư mục riêng cho từng SBD trên Cloud
-            resource_type: 'auto' // Tự động nhận diện ảnh hoặc PDF
+            folder: `HoSoTuyenSinh/${sbd}`,
+            resource_type: 'auto'
         });
 
-        // 3. Lưu đường dẫn URL trả về vào Database
+        // Lưu đường dẫn URL trả về vào Database
         const insertDocQuery = `
             INSERT INTO GiayToDinhKem (MaHoSo, MaLoai, DuongDanFile, TrangThaiFile)
             VALUES ($1, $2, $3, 1)
@@ -149,11 +167,12 @@ const uploadDocument = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ khi xử lý file.' });
     }
 };
+
+// [POST] Chốt nộp hồ sơ tổng thể
 const submitApplication = async (req, res) => {
     const sbd = req.user.sbd;
 
     try {
-        // 1. Kiểm tra hồ sơ có tồn tại và đang ở trạng thái Nháp (0) không
         const hoSoQuery = 'SELECT MaHoSo, TrangThai FROM HoSoNhapHoc WHERE SBD = $1';
         const hoSoResult = await pool.query(hoSoQuery, [sbd]);
 
@@ -167,8 +186,7 @@ const submitApplication = async (req, res) => {
             return res.status(400).json({ message: 'Hồ sơ này đã được nộp hoặc đang được xử lý.' });
         }
 
-        // 2. ÁP DỤNG BR-005: Kiểm tra xem đã nộp đủ các loại giấy tờ Bắt Buộc chưa
-        // Câu query này tìm các loại giấy tờ Bắt Buộc (BatBuoc = true) NHƯNG CHƯA CÓ trong bảng GiayToDinhKem của hồ sơ này
+        // Kiểm tra xem đã nộp đủ các loại giấy tờ Bắt Buộc chưa (BR-005)
         const checkMissingDocsQuery = `
             SELECT l.MaLoai, l.TenLoai
             FROM LoaiGiayTo l
@@ -179,23 +197,22 @@ const submitApplication = async (req, res) => {
         `;
         const missingDocsResult = await pool.query(checkMissingDocsQuery, [hoSo.mahoso]);
 
-        // Nếu danh sách thiếu lớn hơn 0 -> Chặn gửi và báo lỗi
         if (missingDocsResult.rows.length > 0) {
             return res.status(400).json({
                 error: {
                     code: 'MISSING_REQUIRED_DOCS',
                     message: 'Bạn chưa tải lên đầy đủ giấy tờ bắt buộc. Vui lòng bổ sung.',
-                    danhSachThieu: missingDocsResult.rows // Trả về danh sách thiếu để FE hiển thị đỏ lên
+                    danhSachThieu: missingDocsResult.rows
                 }
             });
         }
 
-        // 3. Đủ giấy tờ -> Cập nhật trạng thái sang "Chờ duyệt" (1)
+        // Đủ giấy tờ -> Cập nhật trạng thái sang "Chờ duyệt" (1)
         const updateQuery = 'UPDATE HoSoNhapHoc SET TrangThai = 1 WHERE MaHoSo = $1';
         await pool.query(updateQuery, [hoSo.mahoso]);
 
         res.status(200).json({ 
-            message: 'Nộp hồ sơ thành công; trạng thái: Chờ duyệt' // Response theo đúng API Design 
+            message: 'Nộp hồ sơ thành công; trạng thái: Chờ duyệt' 
         });
 
     } catch (error) {
@@ -203,6 +220,7 @@ const submitApplication = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
 };
+
 module.exports = {
     getAdmissionResult,
     confirmEnrollment,
