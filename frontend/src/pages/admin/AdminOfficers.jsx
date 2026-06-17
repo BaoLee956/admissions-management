@@ -82,6 +82,21 @@ const AdminOfficers = () => {
     }
   };
 
+  // --- API: Đặt lại mật khẩu (Reset Password) ---
+  const handleResetPassword = async (id, name) => {
+    const confirmReset = window.confirm(
+      `Bạn có chắc chắn muốn đặt lại mật khẩu của cán bộ "${name}" về mặc định "123456" không?`
+    );
+    if (!confirmReset) return;
+
+    try {
+      const response = await apiClient.put(`/admin/users/${id}/reset-password`);
+      setMessage({ type: 'success', text: response.data.message || 'Đặt lại mật khẩu thành công (Mật khẩu mới: 123456).' });
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Lỗi hệ thống khi đặt lại mật khẩu.' });
+    }
+  };
+
   // Lọc tìm kiếm theo Tên hoặc Email
   const filteredOfficers = officers.filter(off => 
     off.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -170,24 +185,36 @@ const AdminOfficers = () => {
                       )}
                     </td>
                     <td className="p-4 pr-6 text-right">
-                      <button
-                        onClick={() => handleToggleLock(off.id, off.name, off.isLocked)}
-                        className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
-                          off.isLocked 
-                            ? 'bg-white text-green-600 border-green-200 hover:bg-green-50' 
-                            : 'bg-white text-red-600 border-red-200 hover:bg-red-50'
-                        }`}
-                      >
-                        {off.isLocked ? (
-                          <>
-                            <Unlock size={14} /> Mở khóa phiên
-                          </>
-                        ) : (
-                          <>
-                            <Lock size={14} /> Đình chỉ khóa
-                          </>
-                        )}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {/* Nút Reset Mật Khẩu */}
+                        <button
+                          onClick={() => handleResetPassword(off.id, off.name)}
+                          title="Đặt lại mật khẩu về 123456"
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border bg-white text-amber-600 border-amber-200 hover:bg-amber-50 transition-colors"
+                        >
+                          <Key size={14} /> Reset Pass
+                        </button>
+
+                        {/* Nút Khóa / Mở Khóa */}
+                        <button
+                          onClick={() => handleToggleLock(off.id, off.name, off.isLocked)}
+                          className={`inline-flex items-center justify-center min-w-[100px] gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
+                            off.isLocked 
+                              ? 'bg-white text-green-600 border-green-200 hover:bg-green-50' 
+                              : 'bg-white text-red-600 border-red-200 hover:bg-red-50'
+                          }`}
+                        >
+                          {off.isLocked ? (
+                            <>
+                              <Unlock size={14} /> Mở khóa
+                            </>
+                          ) : (
+                            <>
+                              <Lock size={14} /> Khóa
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

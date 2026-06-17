@@ -136,7 +136,9 @@ const adminLogin = async (req, res) => {
 
         // Kiểm tra tài khoản có bị khóa không
         if (user.islocked) {
-            return res.status(403).json({ error: 'Tài khoản của bạn đã bị khóa.' });
+            return res.status(403).json({ 
+                error: 'Quản trị viên đã khóa tài khoản của bạn, liên hệ để mở lại' 
+            });
         }
 
         // Tạo payload và ký JWT Token
@@ -149,10 +151,12 @@ const adminLogin = async (req, res) => {
         const token = jwt.sign(payload, process.env.JWT_SECRET, { 
             expiresIn: process.env.JWT_EXPIRES_IN || '1d' 
         });
+        const requirePasswordChange = (password === '123456');
 
         res.status(200).json({
             message: 'Đăng nhập thành công.',
             token: token,
+            requirePasswordChange: requirePasswordChange,
             user: {
                 id: user.manhanvien,
                 email: user.email,
@@ -166,8 +170,36 @@ const adminLogin = async (req, res) => {
         res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
     }
 };
+
+const changePassword = async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user.id; // Lấy ID từ Token đã giải mã qua Middleware
+
+    try {
+        const userResult = await pool.query('SELECT MatKhau FROM NhanVien WHERE MaNhanVien = $1', [userId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Không tìm thấy tài khoản.' });
+        }
+
+        const isMatch = await bcrypt.compare(oldPassword, userResult.rows[0].matkhau);
+        if (!isMatch) {
+            return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng.' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+        await pool.query('UPDATE NhanVien SET MatKhau = $1 WHERE MaNhanVien = $2', [hashedPassword, userId]);
+
+        res.status(200).json({ message: 'Cập nhật mật khẩu thành công.' });
+    } catch (error) {
+        console.error('Lỗi tại changePassword:', error);
+        res.status(500).json({ error: 'Lỗi máy chủ nội bộ.' });
+    }
+};
 module.exports = {
     requestCandidateOTP,
     verifyCandidateOTP,
-    adminLogin
+    adminLogin,
+    changePassword
 };

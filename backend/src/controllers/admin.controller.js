@@ -390,6 +390,27 @@ const addChiTieu = async (req, res) => {
         res.status(500).json({ message: 'Lỗi khi cấu hình chỉ tiêu.' });
     }
 };
+const resetOfficerPassword = async (req, res) => {
+    const { id } = req.params; // ID của cán bộ cần reset
+
+    try {
+        // Băm mật khẩu cố định '123456'
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash('123456', saltRounds);
+
+        const updateQuery = 'UPDATE NhanVien SET MatKhau = $1 WHERE MaNhanVien = $2 RETURNING *';
+        const result = await pool.query(updateQuery, [hashedPassword, id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Không tìm thấy tài khoản cán bộ.' });
+        }
+
+        res.status(200).json({ message: 'Đặt lại mật khẩu thành công (Mật khẩu mới: 123456).' });
+    } catch (error) {
+        console.error('Lỗi tại resetOfficerPassword:', error);
+        res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
+    }
+};
 
 module.exports = {
     getPendingApplications,
@@ -407,5 +428,6 @@ module.exports = {
     toggleLockOfficer,
     createNganhCatalog,
     createDotTuyenSinh,
-    addChiTieu
+    addChiTieu,
+    resetOfficerPassword
 };

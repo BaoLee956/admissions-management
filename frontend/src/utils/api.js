@@ -17,19 +17,42 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
     (response) => {
-        return response; // Nếu API gọi thành công, cho đi qua bình thường
+        return response; 
     },
     (error) => {
-        // Nếu Backend báo lỗi 401 (Chưa đăng nhập / Token hết hạn)
+        // Xử lý lỗi 401 (Hết hạn Token tự nhiên)
         if (error.response && error.response.status === 401) {
+            const requestUrl = error.config.url;
+            if (requestUrl === '/auth/admin/login') {
+                return Promise.reject(error);
+            }
             console.warn("Token đã hết hạn, tự động đăng xuất.");
-            // Xóa sạch dữ liệu phiên cũ
             localStorage.removeItem('token');
             localStorage.removeItem('role');
             localStorage.removeItem('user');
-            // Bắt buộc chuyển hướng về trang Login
             window.location.href = '/officer/login';
         }
+        
+        // --- LOGIC MỚI: BẮT LỖI 403 BỊ KHÓA TÀI KHOẢN ---
+        if (error.response && error.response.status === 403) {
+            const errorMsg = error.response.data?.error;
+            const isLockedOut = error.response.data?.isLockedOut;
+            
+            if (isLockedOut || errorMsg === 'Quản trị viên đã khóa tài khoản của bạn, liên hệ để mở lại') {
+                // Hiển thị thông báo bắt buộc
+                window.alert('Quản trị viên đã khóa tài khoản của bạn, liên hệ để mở lại');
+                
+                // Xóa sạch phiên làm việc
+                localStorage.removeItem('token');
+                localStorage.removeItem('role');
+                localStorage.removeItem('user');
+                
+                // Đá văng ra màn hình đăng nhập
+                window.location.href = '/officer/login';
+            }
+        }
+        // ------------------------------------------------
+
         return Promise.reject(error);
     }
 );

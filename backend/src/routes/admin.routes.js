@@ -23,5 +23,5 @@ router.post('/categories/nganh', adminController.createNganhCatalog);    // Thê
 // --- UC10: QUẢN LÝ CẤU HÌNH ĐỢT TUYỂN SINH & CHỈ TIÊU (Độc quyền Admin) ---
 router.post('/admissions/dot', adminController.createDotTuyenSinh);      // Tạo đợt tuyển sinh mới
 router.post('/admissions/chitieu', adminController.addChiTieu);          // Phân bổ chỉ tiêu ngành
-
+router.put('/users/:id/reset-password', adminController.resetOfficerPassword);
 module.exports = router;
