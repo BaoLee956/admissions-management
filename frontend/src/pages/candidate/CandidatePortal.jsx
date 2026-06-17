@@ -8,6 +8,7 @@ import {
   ChevronDown,
   AlertCircle,
   XCircle,
+  Clock, // Bổ sung icon
   Loader2
 } from 'lucide-react';
 import apiClient from '../../utils/api';
@@ -54,7 +55,6 @@ const CandidatePortal = () => {
       const data = res.data.data || res.data;
       setAdmissionResult(data);
       
-      // FIX LUỒNG: Luôn luôn chuyển sang Step 3 (Xem điểm), không nhảy cóc sang Step 4 nữa
       setStep(3);
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Không thể tải kết quả xét tuyển.';
@@ -91,9 +91,8 @@ const CandidatePortal = () => {
     setMessage({ type: '', text: '' });
     try {
       await apiClient.put('/candidates/me/confirm-enrollment', { daXacNhanNhapHoc: true });
-      // Cập nhật lại state ảo để UI hiện nút Tiếp tục thay vì gọi lại API
-      setAdmissionResult(prev => ({ ...prev, daXacNhanNhapHoc: true }));
-      setStep(4);
+      // Bổ sung set trạng thái hồ sơ ảo = 0 (Nháp) để UI hiện đúng nút "Tiếp tục hoàn thiện"
+      setAdmissionResult(prev => ({ ...prev, daXacNhanNhapHoc: true, trangThaiHoSo: 0 }));
     } catch (error) {
       const errorMsg = error.response?.data?.error?.message || 'Có lỗi xảy ra khi xác nhận nhập học.';
       setMessage({ type: 'error', text: errorMsg });
@@ -137,15 +136,13 @@ const CandidatePortal = () => {
       
       alert("Hồ sơ của bạn đã được gửi thành công!");
       
-      // FIX ROLLBACK: Trả thí sinh về trang chủ, dọn dẹp dữ liệu
       setStep(1);
       setFormData({ sbd: '', cccd: '', otp: '' });
       setFiles({ cccd: null, hocBa: null, giayBao: null });
       setAdmissionResult(null);
       localStorage.removeItem('candidateToken');
-      delete apiClient.defaults.headers.common['Authorization']; // Xóa token khỏi Axios
+      delete apiClient.defaults.headers.common['Authorization']; 
       
-      // Hiện thông báo ở màn hình chờ (Step 1)
       setMessage({ type: 'success', text: 'Tuyệt vời! Hệ thống đã ghi nhận hồ sơ minh chứng của bạn. Vui lòng theo dõi email.' });
       
     } catch (error) {
@@ -410,15 +407,9 @@ const CandidatePortal = () => {
                 </table>
               </div>
 
+              {/* LOGIC CHẶN HỒ SƠ SAU KHI NỘP - THEO 4 TRẠNG THÁI */}
               {isPassed && (
-                admissionResult.daXacNhanNhapHoc ? (
-                  <button 
-                    onClick={() => setStep(4)}
-                    className="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-4 px-4 rounded-xl shadow-md transition-all duration-300 flex justify-center"
-                  >
-                    TIẾP TỤC HOÀN THIỆN HỒ SƠ
-                  </button>
-                ) : (
+                !admissionResult.daXacNhanNhapHoc ? (
                   <button 
                     onClick={handleConfirmAdmission}
                     disabled={isLoading}
@@ -431,6 +422,55 @@ const CandidatePortal = () => {
                       </>
                     )}
                   </button>
+                ) : (
+                  <div className="mt-6">
+                    {admissionResult.trangThaiHoSo === 0 ? (
+                        <button 
+                            onClick={() => setStep(4)} 
+                            className="w-full flex items-center justify-center gap-2 py-4 px-4 bg-red-700 hover:bg-red-800 text-white rounded-xl font-bold shadow-md transition-all"
+                        >
+                            TIẾP TỤC HOÀN THIỆN HỒ SƠ <ArrowRight size={18} />
+                        </button>
+                    ) : admissionResult.trangThaiHoSo === 1 ? (
+                        <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-left">
+                            <Clock size={24} className="animate-pulse shrink-0 mt-0.5" />
+                            <div>
+                                <p className="font-bold text-sm">Hồ sơ đang được xử lý</p>
+                                <p className="text-xs mt-1 text-blue-600">
+                                    Cán bộ tuyển sinh đang kiểm tra minh chứng của bạn. Vui lòng quay lại kiểm tra kết quả sau từ 1-2 ngày làm việc.
+                                </p>
+                            </div>
+                        </div>
+                    ) : admissionResult.trangThaiHoSo === 2 ? (
+                        <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-left">
+                            <CheckCircle2 size={24} className="shrink-0 mt-0.5" />
+                            <div>
+                                <p className="font-bold text-sm">Hồ sơ đã được phê duyệt hợp lệ</p>
+                                <p className="text-xs mt-1 text-emerald-600">
+                                    Chúc mừng bạn! Thủ tục nhập học đã hoàn tất. Nhà trường sẽ sớm cấp Mã số Sinh viên (MSSV) cho bạn.
+                                </p>
+                            </div>
+                        </div>
+                    ) : admissionResult.trangThaiHoSo === 3 ? (
+                        <div className="space-y-3 text-left">
+                            <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
+                                <AlertCircle size={24} className="shrink-0 mt-0.5" />
+                                <div>
+                                    <p className="font-bold text-sm">Hồ sơ có sai sót cần bổ sung</p>
+                                    <p className="text-xs mt-1 text-red-600">
+                                        Cán bộ đã yêu cầu cập nhật lại minh chứng. Vui lòng bổ sung ngay để không ảnh hưởng tiến độ nhập học.
+                                    </p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setStep(4)} 
+                                className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-sm transition-all"
+                            >
+                                Nhấn vào đây để cập nhật hồ sơ
+                            </button>
+                        </div>
+                    ) : null}
+                  </div>
                 )
               )}
             </div>

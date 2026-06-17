@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mail, Lock, Loader2, ShieldAlert } from 'lucide-react';
+import { Mail, Lock, Loader2, ShieldAlert, Eye, EyeOff } from 'lucide-react'; // Đã thêm Eye và EyeOff
 import api from '../../utils/api';
 
 const OfficerLogin = () => {
@@ -8,6 +8,11 @@ const OfficerLogin = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  // States quản lý Ẩn/Hiện mật khẩu
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // States dành cho Popup ép đổi mật khẩu
   const [showForceChangePass, setShowForceChangePass] = useState(false);
@@ -159,14 +164,22 @@ const OfficerLogin = () => {
                   <Lock className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   name="password"
                   value={formData.password}
                   onChange={handleChange}
                   required
-                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] transition-colors bg-gray-50 focus:bg-white sm:text-sm outline-none"
+                  className="block w-full pl-10 pr-12 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] transition-colors bg-gray-50 focus:bg-white sm:text-sm outline-none"
                   placeholder="••••••••"
                 />
+                {/* Nút Ẩn/Hiện mật khẩu */}
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-[#b71a22] transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
 
@@ -202,28 +215,49 @@ const OfficerLogin = () => {
             )}
 
             <form onSubmit={handleForceChangePass} className="space-y-4">
+              {/* Ô Nhập mật khẩu mới */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu mới</label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={newPasswords.newPass}
-                  onChange={(e) => { setNewPasswords({...newPasswords, newPass: e.target.value}); setError(''); }}
-                  className="block w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] bg-gray-50 focus:bg-white text-sm outline-none"
-                  placeholder="Nhập mật khẩu mới"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    value={newPasswords.newPass}
+                    onChange={(e) => { setNewPasswords({...newPasswords, newPass: e.target.value}); setError(''); }}
+                    className="block w-full px-3 pr-10 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] bg-gray-50 focus:bg-white text-sm outline-none"
+                    placeholder="Nhập mật khẩu mới"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-[#b71a22] transition-colors"
+                  >
+                    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
+
+              {/* Ô Xác nhận mật khẩu mới */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Xác nhận mật khẩu mới</label>
-                <input
-                  type="password"
-                  required
-                  value={newPasswords.confirmPass}
-                  onChange={(e) => { setNewPasswords({...newPasswords, confirmPass: e.target.value}); setError(''); }}
-                  className="block w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] bg-gray-50 focus:bg-white text-sm outline-none"
-                  placeholder="Nhập lại mật khẩu"
-                />
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? "text" : "password"}
+                    required
+                    value={newPasswords.confirmPass}
+                    onChange={(e) => { setNewPasswords({...newPasswords, confirmPass: e.target.value}); setError(''); }}
+                    className="block w-full px-3 pr-10 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#b71a22] focus:border-[#b71a22] bg-gray-50 focus:bg-white text-sm outline-none"
+                    placeholder="Nhập lại mật khẩu"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-[#b71a22] transition-colors"
+                  >
+                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -233,6 +267,9 @@ const OfficerLogin = () => {
                     setShowForceChangePass(false);
                     setTempAuthData(null);
                     setFormData({ email: '', password: '' });
+                    setShowPassword(false);
+                    setShowNewPassword(false);
+                    setShowConfirmPassword(false);
                   }}
                   className="w-1/3 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
                 >

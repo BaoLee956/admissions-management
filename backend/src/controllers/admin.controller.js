@@ -34,41 +34,61 @@ const getPendingApplications = async (req, res) => {
     }
 };
 
-// [GET] Chi tiết hồ sơ
+// [GET] Lấy chi tiết hồ sơ và danh sách minh chứng
 const getApplicationDetails = async (req, res) => {
-    const { id } = req.params; 
+    const { id } = req.params; // id chính là MaHoSo truyền từ URL
+    if (!id || id === 'undefined' || isNaN(id)) {
+        return res.status(400).json({ error: 'Mã hồ sơ không hợp lệ hoặc bị rỗng.' });
+    }
     try {
-        const hoSoQuery = `
+        // 1. Lấy thông tin chung của hồ sơ, thí sinh và ngành trúng tuyển
+        const hsQuery = `
             SELECT 
-                hs.MaHoSo AS "maHoSo", hs.TrangThai AS "trangThai", ts.SBD AS "sbd",
-                ts.HoTen AS "hoTen", ts.CCCD AS "cccd", ts.NgaySinh AS "ngaySinh",
-                ts.GioiTinh AS "gioiTinh", ts.Email AS "email", ts.SDT AS "sdt", ts.KhuVuc AS "khuVuc"
+                hs.MaHoSo as "maHoSo", hs.TrangThai as "trangThai", hs.NgayNop as "ngayNop", hs.GhiChu as "ghiChu",
+                ts.SBD as "sbd", ts.HoTen as "hoTen", ts.CCCD as "cccd", ts.Email as "email", ts.SDT as "sdt",
+                n.TenNganh as "tenNganh"
             FROM HoSoNhapHoc hs
             JOIN ThiSinh ts ON hs.SBD = ts.SBD
-            WHERE hs.MaHoSo = $1;
+            -- Kết nối để lấy Tên ngành trúng tuyển
+            LEFT JOIN NguyenVong nv ON ts.SBD = nv.SBD AND nv.TrangThai = 1
+            LEFT JOIN ChiTieuTuyenSinh ct ON nv.ID_ChiTieu = ct.ID
+            LEFT JOIN Nganh n ON ct.MaNganh = n.MaNganh
+            WHERE hs.MaHoSo = $1
+            LIMIT 1
         `;
-        const hoSoResult = await pool.query(hoSoQuery, [id]);
+        const hsResult = await pool.query(hsQuery, [id]);
 
-        if (hoSoResult.rows.length === 0) {
-            return res.status(404).json({ message: 'Không tìm thấy hồ sơ yêu cầu.' });
+        if (hsResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Không tìm thấy thông tin hồ sơ này trên hệ thống.' });
         }
 
-        const giayToQuery = `
-            SELECT 
-                g.MaLoai AS "maLoai", l.TenLoai AS "tenLoai", g.DuongDanFile AS "duongDanFile"
-            FROM GiayToDinhKem g
-            JOIN LoaiGiayTo l ON g.MaLoai = l.MaLoai
-            WHERE g.MaHoSo = $1;
-        `;
-        const giayToResult = await pool.query(giayToQuery, [id]);
+        const hoSoInfo = hsResult.rows[0];
 
+        // 2. Lấy danh sách các giấy tờ/file minh chứng đã đính kèm
+        const docsQuery = `
+            SELECT 
+                g.ID as "id", 
+                g.MaLoai as "maLoai", 
+                l.TenLoai as "tenLoai", 
+                g.DuongDanFile as "duongDanFile", 
+                g.TrangThaiFile as "trangThaiFile"
+            FROM GiayToDinhKem g
+            LEFT JOIN LoaiGiayTo l ON g.MaLoai = l.MaLoai
+            WHERE g.MaHoSo = $1
+        `;
+        const docsResult = await pool.query(docsQuery, [id]);
+
+        // 3. Trả dữ liệu gộp về cho giao diện
         res.status(200).json({
-            message: 'Lấy chi tiết hồ sơ thành công.',
-            data: { thongTinChung: hoSoResult.rows[0], giayToMinhChung: giayToResult.rows }
+            data: {
+                ...hoSoInfo,          // Rải phẳng các trường thông tin chung
+                documents: docsResult.rows // Đính kèm mảng documents
+            }
         });
+
     } catch (error) {
-        console.error('Lỗi tại getApplicationDetails:', error);
-        res.status(500).json({ message: 'Lỗi máy chủ nội bộ.' });
+        console.error('Lỗi khi lấy chi tiết hồ sơ:', error);
+        res.status(500).json({ error: 'Lỗi máy chủ nội bộ khi tải chi tiết hồ sơ.' });
     }
 };
 

@@ -6,7 +6,6 @@ const getAdmissionResult = async (req, res) => {
     const sbd = req.user.sbd; 
 
     try {
-        // Query nâng cấp: Lấy thêm KhuVuc và DiemChuan từ cấu hình chỉ tiêu
         const query = `
             SELECT 
                 ts.HoTen AS "hoTen",
@@ -58,6 +57,7 @@ const getAdmissionResult = async (req, res) => {
                 diemUuTien: getDiemUuTien(data.khuVuc),
                 trangThai: data.trangThaiKetQua === 1 ? 'TRUNG_TUYEN' : 'KHONG_TRUNG_TUYEN',
                 daXacNhanNhapHoc: data.trangThaiHoSo !== null, 
+                trangThaiHoSo: data.trangThaiHoSo, // BỔ SUNG: Truyền trực tiếp trạng thái hồ sơ cho Frontend
                 diemChiTiet: resultDiem.rows
             }
         });
@@ -113,7 +113,6 @@ const uploadDocument = async (req, res) => {
     }
 
     try {
-        // SỬA LỖI TẠI ĐÂY: Lấy thêm cột TrangThai của hồ sơ lên để kiểm tra chốt chặn
         const hoSoQuery = 'SELECT MaHoSo, TrangThai FROM HoSoNhapHoc WHERE SBD = $1';
         const hoSoResult = await pool.query(hoSoQuery, [sbd]);
 
@@ -125,8 +124,7 @@ const uploadDocument = async (req, res) => {
         
         const hoSo = hoSoResult.rows[0];
 
-        // CHỐT CHẶN CỰC KỲ QUAN TRỌNG: Nếu trạng thái hồ sơ khác 0 (tức là đã nộp/đang duyệt), cấm upload!
-        if (hoSo.trangthai !== 0) {
+        if (hoSo.trangthai !== 0 && hoSo.trangthai !== 3) { // 0: Nháp, 3: Yêu cầu bổ sung
             return res.status(400).json({ 
                 error: { 
                     code: 'APPLICATION_SUBMITTED', 
@@ -146,7 +144,6 @@ const uploadDocument = async (req, res) => {
             resource_type: 'auto'
         });
 
-        // Lưu đường dẫn URL trả về vào Database
         const insertDocQuery = `
             INSERT INTO GiayToDinhKem (MaHoSo, MaLoai, DuongDanFile, TrangThaiFile)
             VALUES ($1, $2, $3, 1)
@@ -182,11 +179,11 @@ const submitApplication = async (req, res) => {
 
         const hoSo = hoSoResult.rows[0];
 
-        if (hoSo.trangthai !== 0) {
+        if (hoSo.trangthai !== 0 && hoSo.trangthai !== 3) {
             return res.status(400).json({ message: 'Hồ sơ này đã được nộp hoặc đang được xử lý.' });
         }
 
-        // Kiểm tra xem đã nộp đủ các loại giấy tờ Bắt Buộc chưa (BR-005)
+        // Kiểm tra xem đã nộp đủ các loại giấy tờ Bắt Buộc chưa
         const checkMissingDocsQuery = `
             SELECT l.MaLoai, l.TenLoai
             FROM LoaiGiayTo l
